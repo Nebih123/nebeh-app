@@ -17,7 +17,7 @@
 </head>
 <body>
   <div id="app">
-    <!-- Bottom Navigation -->
+    <!-- Bottom Navigation: 5 tabs now -->
     <nav class="bottom-nav">
       <button class="nav-item active" data-tab="statement" onclick="switchTab('statement')">
         <span class="nav-icon">◈</span>
@@ -31,9 +31,17 @@
         <span class="nav-icon">◻</span>
         <span class="nav-label">Batman</span>
       </button>
+      <button class="nav-item" data-tab="history" onclick="switchTab('history')">
+        <span class="nav-icon">📊</span>
+        <span class="nav-label">History</span>
+      </button>
+      <button class="nav-item" data-tab="settings" onclick="switchTab('settings')">
+        <span class="nav-icon">⚙️</span>
+        <span class="nav-label">Settings</span>
+      </button>
     </nav>
 
-    <!-- STATEMENT TAB -->
+    <!-- STATEMENT TAB (unchanged) -->
     <div id="tab-statement" class="tab active">
       <div class="statement-page">
         <div class="statement-header">
@@ -95,15 +103,59 @@
         <div class="journal-field"><label class="field-label">5. One thing I'm grateful for today</label><textarea id="e-grateful" class="field-input" rows="2"></textarea></div>
         <button class="save-btn" onclick="saveJournal('evening')">Save Evening Entry</button>
       </div>
-      <div class="past-entries"><h3 class="past-label">Past Entries</h3><div id="entries-list"></div></div>
     </div>
 
-    <!-- TODOS / BATMAN SCHEDULE TAB -->
+    <!-- BATMAN SCHEDULE TAB -->
     <div id="tab-todos" class="tab">
       <div class="page-header"><h2 class="page-title">Batman Schedule</h2><span class="today-date" id="todos-date"></span></div>
       <div class="week-nav"><button class="week-arrow" onclick="shiftWeek(-1)">‹</button><span class="week-label" id="week-label"></span><button class="week-arrow" onclick="shiftWeek(1)">›</button></div>
       <div class="day-tabs" id="day-tabs"></div>
       <div class="schedule-list" id="schedule-list"></div>
+    </div>
+
+    <!-- HISTORY TAB -->
+    <div id="tab-history" class="tab">
+      <div class="page-header"><h2 class="page-title">History & Progress</h2><span class="today-date" id="history-date"></span></div>
+      <div class="history-section">
+        <h3 class="history-heading">📈 Task Completion (scheduled days only)</h3>
+        <div id="task-stats-container" class="task-stats"></div>
+      </div>
+      <div class="history-section">
+        <h3 class="history-heading">📔 All Journal Entries</h3>
+        <div id="history-entries-list"></div>
+      </div>
+    </div>
+
+    <!-- SETTINGS TAB -->
+    <div id="tab-settings" class="tab">
+      <div class="page-header"><h2 class="page-title">Edit Tasks</h2><span class="today-date"></span></div>
+      <div class="settings-intro">
+        <p>Add, edit or delete tasks. Each task can be scheduled on specific weekdays.</p>
+      </div>
+      
+      <!-- Form to add new task -->
+      <div class="add-task-form">
+        <input type="text" id="new-task-name" placeholder="Task name e.g. 'Meditation'" class="field-input" />
+        <input type="text" id="new-task-time" placeholder="Time e.g. '07:00 – 07:15'" class="field-input" />
+        <div class="days-checkboxes">
+          <label><input type="checkbox" value="0" /> Sun</label>
+          <label><input type="checkbox" value="1" /> Mon</label>
+          <label><input type="checkbox" value="2" /> Tue</label>
+          <label><input type="checkbox" value="3" /> Wed</label>
+          <label><input type="checkbox" value="4" /> Thu</label>
+          <label><input type="checkbox" value="5" /> Fri</label>
+          <label><input type="checkbox" value="6" /> Sat</label>
+        </div>
+        <button class="save-btn" onclick="addNewTask()">➕ Add Task</button>
+      </div>
+
+      <!-- List of existing tasks -->
+      <div class="tasks-list" id="tasks-list"></div>
+      
+      <!-- Danger zone -->
+      <div class="danger-zone">
+        <button class="danger-btn" onclick="resetAllTasks()">⚠️ Reset to default tasks</button>
+      </div>
     </div>
   </div>
   <script src="app.js"></script>
