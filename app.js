@@ -1,6 +1,5 @@
 const $ = id => document.getElementById(id);
 const fmt = d => d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
-const fmtFull = d => d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 const key = (type, d) => `${type}::${d.toISOString().slice(0,10)}`;
 
 function showToast(msg) {
@@ -11,7 +10,7 @@ function showToast(msg) {
   setTimeout(() => t.classList.remove('show'), 2200);
 }
 
-// ─── TASKS STORAGE ─────────────────────────────────────────
+// TASKS STORAGE
 const TASKS_STORAGE_KEY = 'custom_tasks';
 const DEFAULT_TASKS = [
   { id: 'sleep', name: 'Sleep (8h)', time: '05:00', days: [0,1,2,3,4,5,6] },
@@ -26,17 +25,12 @@ const DEFAULT_TASKS = [
 function getTasks() {
   const stored = localStorage.getItem(TASKS_STORAGE_KEY);
   if (stored) {
-    try {
-      return JSON.parse(stored);
-    } catch(e) { return [...DEFAULT_TASKS]; }
-  } else {
-    return [...DEFAULT_TASKS];
-  }
+    try { return JSON.parse(stored); } catch(e) { return [...DEFAULT_TASKS]; }
+  } else { return [...DEFAULT_TASKS]; }
 }
 
 function saveTasks(tasks) {
   localStorage.setItem(TASKS_STORAGE_KEY, JSON.stringify(tasks));
-  // Refresh any UI that depends on tasks
   if (document.querySelector('#tab-todos.active')) renderTodos();
   if (document.querySelector('#tab-history.active')) renderHistory();
   if (document.querySelector('#tab-settings.active')) renderSettings();
@@ -49,24 +43,19 @@ function resetAllTasks() {
   }
 }
 
-// ─── TAB SWITCHING ─────────────────────────────────────────
+// TAB SWITCHING
 function switchTab(tab) {
   document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
   $(`tab-${tab}`).classList.add('active');
   document.querySelector(`[data-tab="${tab}"]`).classList.add('active');
-  if (tab === 'journal') {
-    renderJournalDate();
-  } else if (tab === 'todos') {
-    renderTodos();
-  } else if (tab === 'history') {
-    renderHistory();
-  } else if (tab === 'settings') {
-    renderSettings();
-  }
+  if (tab === 'journal') renderJournalDate();
+  else if (tab === 'todos') renderTodos();
+  else if (tab === 'history') renderHistory();
+  else if (tab === 'settings') renderSettings();
 }
 
-// ─── JOURNAL (unchanged) ───────────────────────────────────
+// JOURNAL
 let journalMode = 'morning';
 function switchJournal(mode) {
   journalMode = mode;
@@ -76,13 +65,11 @@ function switchJournal(mode) {
   $('btn-evening').classList.toggle('active', mode === 'evening');
   loadJournalEntry(mode);
 }
-
 function renderJournalDate() {
   const d = new Date();
   $('journal-date').textContent = fmt(d);
   loadJournalEntry(journalMode);
 }
-
 function saveJournal(mode) {
   const d = new Date();
   let data = {};
@@ -111,7 +98,6 @@ function saveJournal(mode) {
   localStorage.setItem(key(mode, d), JSON.stringify(data));
   showToast('Entry saved ✓');
 }
-
 function loadJournalEntry(mode) {
   const d = new Date();
   const stored = localStorage.getItem(key(mode, d));
@@ -134,13 +120,12 @@ function loadJournalEntry(mode) {
   }
 }
 
-// ─── HISTORY (journal + task stats) ─────────────────────────
+// HISTORY
 function renderHistory() {
   $('history-date').textContent = fmt(new Date());
   renderHistoryEntries();
   renderTaskStats();
 }
-
 function renderHistoryEntries() {
   const container = $('history-entries-list');
   const entries = [];
@@ -158,19 +143,10 @@ function renderHistoryEntries() {
   container.innerHTML = entries.map(({ k, d }) => {
     const dateStr = new Date(d.date + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
     const isToday = d.date === new Date().toISOString().slice(0,10);
-    const preview = d.mode === 'morning' 
-      ? (d.feeling || (d.priorities?.filter(Boolean).join(' · ') || ''))
-      : (d.well || d.grateful || '');
-    return `<div class="entry-card" onclick="showEntry('${k}')">
-      <div class="entry-meta">
-        <span class="entry-date">${dateStr}${isToday ? ' — Today' : ''}</span>
-        <span class="entry-type">${d.mode === 'morning' ? '🌅 Morning' : '🌙 Evening'}</span>
-      </div>
-      <p class="entry-preview">${preview || '(no preview)'}</p>
-    </div>`;
+    const preview = d.mode === 'morning' ? (d.feeling || (d.priorities?.filter(Boolean).join(' · ') || '')) : (d.well || d.grateful || '');
+    return `<div class="entry-card" onclick="showEntry('${k}')"><div class="entry-meta"><span class="entry-date">${dateStr}${isToday ? ' — Today' : ''}</span><span class="entry-type">${d.mode === 'morning' ? '🌅 Morning' : '🌙 Evening'}</span></div><p class="entry-preview">${preview || '(no preview)'}</p></div>`;
   }).join('');
 }
-
 window.showEntry = function(k) {
   const d = JSON.parse(localStorage.getItem(k));
   const dateStr = new Date(d.date + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
@@ -193,14 +169,11 @@ window.showEntry = function(k) {
   overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
   document.body.appendChild(overlay);
 };
-
 function renderTaskStats() {
   const tasks = getTasks();
   const container = $('task-stats-container');
   const taskStats = {};
-  tasks.forEach(t => {
-    taskStats[t.id] = { name: t.name, scheduledCount: 0, completedCount: 0, days: t.days };
-  });
+  tasks.forEach(t => { taskStats[t.id] = { name: t.name, scheduledCount: 0, completedCount: 0, days: t.days }; });
   for (let i = 0; i < localStorage.length; i++) {
     const k = localStorage.key(i);
     if (k.startsWith('batman::')) {
@@ -212,9 +185,7 @@ function renderTaskStats() {
       for (let taskId in taskStats) {
         if (taskStats[taskId].days.includes(dow)) {
           taskStats[taskId].scheduledCount++;
-          if (state[taskId] === true) {
-            taskStats[taskId].completedCount++;
-          }
+          if (state[taskId] === true) taskStats[taskId].completedCount++;
         }
       }
     }
@@ -226,18 +197,13 @@ function renderTaskStats() {
   }
   container.innerHTML = Object.values(taskStats).map(t => {
     const percent = t.scheduledCount === 0 ? 0 : Math.round((t.completedCount / t.scheduledCount) * 100);
-    return `<div class="stat-card">
-      <div class="stat-header"><span class="stat-name">${t.name}</span><span class="stat-percent">${percent}%</span></div>
-      <div class="progress-bar-bg"><div class="progress-bar-fill" style="width: ${percent}%;"></div></div>
-      <div class="stat-detail">${t.completedCount} / ${t.scheduledCount} scheduled days</div>
-    </div>`;
+    return `<div class="stat-card"><div class="stat-header"><span class="stat-name">${t.name}</span><span class="stat-percent">${percent}%</span></div><div class="progress-bar-bg"><div class="progress-bar-fill" style="width: ${percent}%;"></div></div><div class="stat-detail">${t.completedCount} / ${t.scheduledCount} scheduled days</div></div>`;
   }).join('');
 }
 
-// ─── BATMAN SCHEDULE (dynamic tasks) ────────────────────────
+// BATMAN SCHEDULE (dynamic)
 let weekOffset = 0;
 let selectedDay = null;
-
 function getWeekDays(offset = 0) {
   const today = new Date(); today.setHours(0,0,0,0);
   const mon = new Date(today);
@@ -246,7 +212,6 @@ function getWeekDays(offset = 0) {
   mon.setDate(today.getDate() + diff + offset * 7);
   return Array.from({ length: 7 }, (_, i) => { const d = new Date(mon); d.setDate(mon.getDate() + i); return d; });
 }
-
 function renderTodos() {
   const today = new Date(); today.setHours(0,0,0,0);
   const days = getWeekDays(weekOffset);
@@ -269,10 +234,8 @@ function renderTodos() {
   }).join('');
   renderDaySchedule();
 }
-
 window.selectDay = function(d) { selectedDay = new Date(d); selectedDay._weekOffset = weekOffset; renderTodos(); };
 window.shiftWeek = function(dir) { weekOffset += dir; selectedDay = null; renderTodos(); };
-
 function renderDaySchedule() {
   if (!selectedDay) return;
   const d = selectedDay;
@@ -285,7 +248,6 @@ function renderDaySchedule() {
   if (tasks.length === 0) { list.innerHTML = '<p style="color:var(--text-dim);font-size:14px;text-align:center;padding:40px 0">No tasks scheduled for this day.</p>'; return; }
   list.innerHTML = tasks.map(t => `<div class="schedule-item ${state[t.id] ? 'done' : ''}" onclick="toggleTask('${t.id}', '${dateKey}')"><div class="task-check"></div><div class="task-info"><div class="task-time">${t.time}</div><div class="task-name">${t.name}</div></div></div>`).join('');
 }
-
 window.toggleTask = function(taskId, dateKey) {
   const stateKey = `batman::${dateKey}`;
   let state = {};
@@ -301,7 +263,7 @@ window.toggleTask = function(taskId, dateKey) {
   else if (state[taskId]) showToast('Done ✓');
 };
 
-// ─── SETTINGS: add, edit, delete tasks ─────────────────────
+// SETTINGS
 function renderSettings() {
   const tasks = getTasks();
   const container = $('tasks-list');
@@ -311,43 +273,19 @@ function renderSettings() {
   }
   container.innerHTML = tasks.map((task, idx) => {
     const daysStr = task.days.map(d => ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d]).join(', ');
-    return `
-      <div class="task-item" data-idx="${idx}">
-        <div class="task-header">
-          <strong>${task.name}</strong>
-          <div class="task-actions">
-            <button class="icon-btn edit-task" onclick="editTask(${idx})">✏️</button>
-            <button class="icon-btn delete-task" onclick="deleteTask(${idx})">🗑️</button>
-          </div>
-        </div>
-        <div class="task-detail">🕒 ${task.time}</div>
-        <div class="task-detail">📅 ${daysStr}</div>
-      </div>
-    `;
+    return `<div class="task-item" data-idx="${idx}"><div class="task-header"><strong>${task.name}</strong><div class="task-actions"><button class="icon-btn edit-task" onclick="editTask(${idx})">✏️</button><button class="icon-btn delete-task" onclick="deleteTask(${idx})">🗑️</button></div></div><div class="task-detail">🕒 ${task.time}</div><div class="task-detail">📅 ${daysStr}</div></div>`;
   }).join('');
 }
-
 window.addNewTask = function() {
   const name = $('#new-task-name').value.trim();
   const time = $('#new-task-time').value.trim();
-  if (!name || !time) {
-    showToast('Please fill both name and time');
-    return;
-  }
+  if (!name || !time) { showToast('Please fill both name and time'); return; }
   const checkboxes = document.querySelectorAll('#tab-settings .days-checkboxes input');
   const days = Array.from(checkboxes).filter(cb => cb.checked).map(cb => parseInt(cb.value));
-  if (days.length === 0) {
-    showToast('Select at least one day');
-    return;
-  }
+  if (days.length === 0) { showToast('Select at least one day'); return; }
   const tasks = getTasks();
   const newId = `custom_${Date.now()}_${Math.floor(Math.random()*1000)}`;
-  tasks.push({
-    id: newId,
-    name: name,
-    time: time,
-    days: days.sort((a,b)=>a-b)
-  });
+  tasks.push({ id: newId, name: name, time: time, days: days.sort((a,b)=>a-b) });
   saveTasks(tasks);
   $('#new-task-name').value = '';
   $('#new-task-time').value = '';
@@ -355,7 +293,6 @@ window.addNewTask = function() {
   renderSettings();
   showToast('Task added');
 };
-
 window.editTask = function(idx) {
   const tasks = getTasks();
   const task = tasks[idx];
@@ -372,7 +309,6 @@ window.editTask = function(idx) {
   renderSettings();
   showToast('Task updated');
 };
-
 window.deleteTask = function(idx) {
   if (confirm('Delete this task? All past checkmarks for this task will remain in storage but won’t appear in schedule anymore.')) {
     const tasks = getTasks();
