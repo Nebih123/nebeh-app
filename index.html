@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0A0A0F" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Nebih" />
+  <title>Nebih — Command Center</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,700;1,700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- Bottom Navigation -->
+    <nav class="bottom-nav">
+      <button class="nav-item active" data-tab="statement" onclick="switchTab('statement')">
+        <span class="nav-icon">◈</span>
+        <span class="nav-label">Statement</span>
+      </button>
+      <button class="nav-item" data-tab="journal" onclick="switchTab('journal')">
+        <span class="nav-icon">✦</span>
+        <span class="nav-label">Journal</span>
+      </button>
+      <button class="nav-item" data-tab="todos" onclick="switchTab('todos')">
+        <span class="nav-icon">◻</span>
+        <span class="nav-label">Batman</span>
+      </button>
+    </nav>
+
+    <!-- STATEMENT TAB -->
+    <div id="tab-statement" class="tab active">
+      <div class="statement-page">
+        <div class="statement-header">
+          <p class="statement-eyebrow">Personal Declaration</p>
+          <h1 class="statement-name">Nebih Haziri</h1>
+          <p class="statement-date">09.06.2026</p>
+        </div>
+        <div class="statement-body">
+          <div class="statement-opening"><p>UNË, NEBIH HAZIRI, kam një qëllim të qartë dhe të prerë për jetën time.</p></div>
+          <div class="statement-section">
+            <p>Deri në fund të vitit 2031, unë do të jem një profesionist elitar i financave, një lider i respektuar dhe pronar i një biznesi të suksesshëm të kontabilitetit. Do të kem ndërtuar një jetë me stabilitet financiar, shëndet të fortë, disiplinë dhe ndikim pozitiv te familja, klientët dhe komuniteti im.</p>
+            <p>Në këmbim të këtij suksesi, unë do të jap punë të ndershme, përkushtim, disiplinë dhe mësim të vazhdueshëm çdo ditë.</p>
+          </div>
+          <div class="statement-pillars">
+            <div class="pillar"><span class="pillar-icon">📊</span><div><strong>Finance Mastery</strong><p>Çdo javë përmirësoj njohuritë e mia në kontabilitet, raportim financiar, buxhetim, analiza të fluksit të parasë dhe menaxhim biznesi. Bëhem ekspert në Excel, Power Query, Power BI, Business Central dhe sistemet ERP. Përparoj drejt ACCA ose CIMA.</p></div></div>
+            <div class="pillar"><span class="pillar-icon">🏗️</span><div><strong>Business Building</strong><p>Ndërtoj biznesin tim hap pas hapi. Çdo proces e shndërroj në një sistem që mund të dokumentohet, automatizohet dhe delegohet.</p></div></div>
+            <div class="pillar"><span class="pillar-icon">💪</span><div><strong>Body & Mind</strong><p>Kujdesem për trupin dhe mendjen time. Stërvitem rregullisht me forcë, kardio dhe arte marciale. Ndërtoj energji, vetëbesim dhe qetësi nën presion.</p></div></div>
+            <div class="pillar"><span class="pillar-icon">⚙️</span><div><strong>Technology</strong><p>Përqafoj teknologjinë. Mësoj inteligjencën artificiale, automatizimin, SQL dhe Python për të krijuar zgjidhje më të mira.</p></div></div>
+            <div class="pillar"><span class="pillar-icon">💰</span><div><strong>Wealth</strong><p>Ndërtoj pasuri me durim dhe mençuri. Mbaj disiplinë financiare, investoj rregullisht, zhvilloj burime të shumta të të ardhurave.</p></div></div>
+          </div>
+          <div class="statement-question">
+            <p class="question-text">"Si mund të ndërtoj një sistem që ky problem të mos ndodhë përsëri?"</p>
+            <p class="question-sub">Unë nuk jetoj duke shuar zjarre — unë ndërtoj sisteme.</p>
+          </div>
+          <div class="statement-affirmations">
+            <div class="affirmation">Unë jam i disiplinuar.</div>
+            <div class="affirmation">Unë jam i besueshëm.</div>
+            <div class="affirmation">Unë jam një profesionist elitar i financave.</div>
+            <div class="affirmation">Unë jam një ndërtues sistemesh.</div>
+            <div class="affirmation">Unë jam duke krijuar liri financiare për veten dhe familjen time.</div>
+          </div>
+          <div class="statement-closing">
+            <p>Besoj se Allahu i shpërblen ata që punojnë me sinqeritet, durim dhe drejtësi. Çdo ditë, në çdo mënyrë, po bëhem më i ditur, më i fortë, më i pasur dhe më i dobishëm për të tjerët.</p>
+            <p><em>Ky është qëllimi im i prerë. Unë e shoh, e besoj dhe veproj për ta bërë realitet.</em></p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- JOURNAL TAB -->
+    <div id="tab-journal" class="tab">
+      <div class="page-header"><h2 class="page-title">Journal</h2><span class="today-date" id="journal-date"></span></div>
+      <div class="journal-toggle">
+        <button class="toggle-btn active" id="btn-morning" onclick="switchJournal('morning')">🌅 Morning</button>
+        <button class="toggle-btn" id="btn-evening" onclick="switchJournal('evening')">🌙 Evening</button>
+      </div>
+      <div id="morning-journal" class="journal-form">
+        <div class="journal-field"><label class="field-label">1. How am I feeling right now?</label><p class="field-hint">Be honest — one sentence is enough</p><textarea id="m-feeling" class="field-input" rows="2"></textarea></div>
+        <div class="journal-field"><label class="field-label">2. My 3 priorities today</label><input id="m-p1" class="field-input" placeholder="Priority 1" /><input id="m-p2" class="field-input" placeholder="Priority 2" /><input id="m-p3" class="field-input" placeholder="Priority 3" /></div>
+        <div class="journal-field"><label class="field-label">3. What would make today a win?</label><p class="field-hint">Just one thing — the most important</p><textarea id="m-win" class="field-input" rows="2"></textarea></div>
+        <div class="journal-field"><label class="field-label">4. What am I avoiding that I shouldn't be?</label><p class="field-hint">The uncomfortable question</p><textarea id="m-avoid" class="field-input" rows="2"></textarea></div>
+        <button class="save-btn" onclick="saveJournal('morning')">Save Morning Entry</button>
+      </div>
+      <div id="evening-journal" class="journal-form hidden">
+        <div class="journal-field"><label class="field-label">1. Did I do what I said this morning?</label><div class="radio-group"><label class="radio-opt"><input type="radio" name="e-did" value="Yes" /> Yes</label><label class="radio-opt"><input type="radio" name="e-did" value="Partially" /> Partially</label><label class="radio-opt"><input type="radio" name="e-did" value="No" /> No</label></div><textarea id="e-did-why" class="field-input" rows="2" placeholder="Why?"></textarea></div>
+        <div class="journal-field"><label class="field-label">2. What went well today?</label><textarea id="e-well" class="field-input" rows="2"></textarea></div>
+        <div class="journal-field"><label class="field-label">3. What drained me or went wrong?</label><textarea id="e-wrong" class="field-input" rows="2"></textarea></div>
+        <div class="journal-field"><label class="field-label">4. What do I want to do differently tomorrow?</label><textarea id="e-different" class="field-input" rows="2"></textarea></div>
+        <div class="journal-field"><label class="field-label">5. One thing I'm grateful for today</label><textarea id="e-grateful" class="field-input" rows="2"></textarea></div>
+        <button class="save-btn" onclick="saveJournal('evening')">Save Evening Entry</button>
+      </div>
+      <div class="past-entries"><h3 class="past-label">Past Entries</h3><div id="entries-list"></div></div>
+    </div>
+
+    <!-- TODOS / BATMAN SCHEDULE TAB -->
+    <div id="tab-todos" class="tab">
+      <div class="page-header"><h2 class="page-title">Batman Schedule</h2><span class="today-date" id="todos-date"></span></div>
+      <div class="week-nav"><button class="week-arrow" onclick="shiftWeek(-1)">‹</button><span class="week-label" id="week-label"></span><button class="week-arrow" onclick="shiftWeek(1)">›</button></div>
+      <div class="day-tabs" id="day-tabs"></div>
+      <div class="schedule-list" id="schedule-list"></div>
+    </div>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
