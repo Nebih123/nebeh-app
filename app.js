@@ -152,8 +152,7 @@ const DEFAULT_MORNING_QS = [
   { id: 'm0', label: 'How am I feeling right now?',          hint: 'Be honest — one sentence is enough' },
   { id: 'm1', label: 'My 3 priorities today',                hint: '', type: 'priorities' },
   { id: 'm2', label: 'What would make today a win?',         hint: 'Just one thing — the most important' },
-  { id: 'm3', label: "What am I avoiding that I shouldn't be?", hint: 'The uncomfortable question' },
-];
+  { id: 'm3', label: 'What am I avoiding that I shouldn\'t be?', hint: 'The uncomfortable question' },
 const DEFAULT_EVENING_QS = [
   { id: 'e0', label: 'Did I do what I said this morning?',   hint: '', type: 'radio' },
   { id: 'e1', label: 'What went well today?',                hint: '' },
