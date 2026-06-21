@@ -97,9 +97,32 @@ async function pullSync(silent) {
 window.syncNow = async function() {
   if (!getSyncUrl()) { showToast('Add a Sheet URL first'); return; }
   showToast('Syncing…');
+  await fetchSettingsFromSheet();
   await pullSync();
   pushAllLocal();
 };
+
+// Fetch tasks (and future: journal questions) from Settings sheet.
+// Sheet is always the source of truth — overwrites localStorage.
+async function fetchSettingsFromSheet() {
+  const url = getSyncUrl();
+  if (!url) return;
+  try {
+    const res  = await fetch(url + '?action=getSettings');
+    const data = await res.json();
+    if (data && Array.isArray(data.custom_tasks) && data.custom_tasks.length > 0) {
+      const json = JSON.stringify(data.custom_tasks);
+      // Write directly to localStorage (bypass setSynced to avoid push-back loop)
+      localStorage.setItem(TASKS_STORAGE_KEY, json);
+      // Update sync meta so pullSync doesn't overwrite with old data
+      const meta = getSyncMeta();
+      meta[TASKS_STORAGE_KEY] = Date.now();
+      setSyncMeta(meta);
+    }
+  } catch (_) {
+    // Offline or sheet not reachable — use whatever is in localStorage
+  }
+}
 window.saveSyncUrl = function() {
   const val = $('sync-url-input').value;
   setSyncUrl(val);
@@ -430,8 +453,15 @@ window.deleteTask = function(idx) {
 };
 
 // INIT
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   renderJournalDate();
-  if (getSyncUrl()) pullSync(true).then(() => { if (document.querySelector('.tab.active')?.id === 'tab-journal') renderJournalDate(); });
+  if (getSyncUrl()) {
+    // Always fetch latest tasks from Settings sheet first, then pull journal/batman data
+    await fetchSettingsFromSheet();
+    renderJournalDate();
+    pullSync(true).then(() => {
+      if (document.querySelector('.tab.active')?.id === 'tab-journal') renderJournalDate();
+    });
+  }
   if ('serviceWorker' in navigator) { navigator.serviceWorker.register('sw.js').catch(err => console.log('SW:', err)); }
 });
