@@ -89,19 +89,10 @@
         <button class="toggle-btn" id="btn-evening" onclick="switchJournal('evening')">🌙 Evening</button>
       </div>
       <div id="morning-journal" class="journal-form">
-        <div class="journal-field"><label class="field-label">1. How am I feeling right now?</label><p class="field-hint">Be honest — one sentence is enough</p><textarea id="m-feeling" class="field-input" rows="2"></textarea></div>
-        <div class="journal-field"><label class="field-label">2. My 3 priorities today</label><input id="m-p1" class="field-input" placeholder="Priority 1" /><input id="m-p2" class="field-input" placeholder="Priority 2" /><input id="m-p3" class="field-input" placeholder="Priority 3" /></div>
-        <div class="journal-field"><label class="field-label">3. What would make today a win?</label><p class="field-hint">Just one thing — the most important</p><textarea id="m-win" class="field-input" rows="2"></textarea></div>
-        <div class="journal-field"><label class="field-label">4. What am I avoiding that I shouldn't be?</label><p class="field-hint">The uncomfortable question</p><textarea id="m-avoid" class="field-input" rows="2"></textarea></div>
-        <button class="save-btn" onclick="saveJournal('morning')">Save Morning Entry</button>
+        <!-- Rendered dynamically by app.js renderJournalForm() -->
       </div>
       <div id="evening-journal" class="journal-form hidden">
-        <div class="journal-field"><label class="field-label">1. Did I do what I said this morning?</label><div class="radio-group"><label class="radio-opt"><input type="radio" name="e-did" value="Yes" /> Yes</label><label class="radio-opt"><input type="radio" name="e-did" value="Partially" /> Partially</label><label class="radio-opt"><input type="radio" name="e-did" value="No" /> No</label></div><textarea id="e-did-why" class="field-input" rows="2" placeholder="Why?"></textarea></div>
-        <div class="journal-field"><label class="field-label">2. What went well today?</label><textarea id="e-well" class="field-input" rows="2"></textarea></div>
-        <div class="journal-field"><label class="field-label">3. What drained me or went wrong?</label><textarea id="e-wrong" class="field-input" rows="2"></textarea></div>
-        <div class="journal-field"><label class="field-label">4. What do I want to do differently tomorrow?</label><textarea id="e-different" class="field-input" rows="2"></textarea></div>
-        <div class="journal-field"><label class="field-label">5. One thing I'm grateful for today</label><textarea id="e-grateful" class="field-input" rows="2"></textarea></div>
-        <button class="save-btn" onclick="saveJournal('evening')">Save Evening Entry</button>
+        <!-- Rendered dynamically by app.js renderJournalForm() -->
       </div>
     </div>
 

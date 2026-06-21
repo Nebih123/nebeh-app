@@ -102,25 +102,32 @@ window.syncNow = async function() {
   pushAllLocal();
 };
 
-// Fetch tasks (and future: journal questions) from Settings sheet.
-// Sheet is always the source of truth — overwrites localStorage.
+// Fetch tasks + journal questions from Settings sheet (sheet = source of truth)
 async function fetchSettingsFromSheet() {
   const url = getSyncUrl();
   if (!url) return;
   try {
     const res  = await fetch(url + '?action=getSettings');
     const data = await res.json();
+    const meta = getSyncMeta();
+    const now  = Date.now();
+
+    // Tasks — sheet always wins
     if (data && Array.isArray(data.custom_tasks) && data.custom_tasks.length > 0) {
-      const json = JSON.stringify(data.custom_tasks);
-      // Write directly to localStorage (bypass setSynced to avoid push-back loop)
-      localStorage.setItem(TASKS_STORAGE_KEY, json);
-      // Update sync meta so pullSync doesn't overwrite with old data
-      const meta = getSyncMeta();
-      meta[TASKS_STORAGE_KEY] = Date.now();
-      setSyncMeta(meta);
+      localStorage.setItem(TASKS_STORAGE_KEY, JSON.stringify(data.custom_tasks));
+      meta[TASKS_STORAGE_KEY] = now;
     }
+
+    // Journal questions — build from sheet labels and save
+    if (data && Array.isArray(data.morning_questions) && data.morning_questions.length > 0) {
+      const qs = buildQsFromLabels(data.morning_questions, data.evening_questions || []);
+      saveJournalQuestions(qs);
+      meta[JOURNAL_QS_KEY] = now;
+    }
+
+    setSyncMeta(meta);
   } catch (_) {
-    // Offline or sheet not reachable — use whatever is in localStorage
+    // Offline — use localStorage as fallback
   }
 }
 window.saveSyncUrl = function() {
@@ -136,6 +143,53 @@ function showToast(msg) {
   t.textContent = msg;
   t.classList.add('show');
   setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+// JOURNAL QUESTIONS STORAGE
+const JOURNAL_QS_KEY = 'journal_questions';
+
+const DEFAULT_MORNING_QS = [
+  { id: 'm0', label: 'How am I feeling right now?',          hint: 'Be honest — one sentence is enough' },
+  { id: 'm1', label: 'My 3 priorities today',                hint: '', type: 'priorities' },
+  { id: 'm2', label: 'What would make today a win?',         hint: 'Just one thing — the most important' },
+  { id: 'm3', label: 'What am I avoiding that I shouldn't be?', hint: 'The uncomfortable question' },
+];
+const DEFAULT_EVENING_QS = [
+  { id: 'e0', label: 'Did I do what I said this morning?',   hint: '', type: 'radio' },
+  { id: 'e1', label: 'What went well today?',                hint: '' },
+  { id: 'e2', label: 'What drained me or went wrong?',       hint: '' },
+  { id: 'e3', label: 'What do I want to do differently tomorrow?', hint: '' },
+  { id: 'e4', label: 'One thing I'm grateful for today',    hint: '' },
+];
+
+function getJournalQuestions() {
+  try {
+    const stored = localStorage.getItem(JOURNAL_QS_KEY);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      if (parsed.morning && parsed.evening) return parsed;
+    }
+  } catch(_) {}
+  return { morning: DEFAULT_MORNING_QS, evening: DEFAULT_EVENING_QS };
+}
+
+function saveJournalQuestions(qs) {
+  localStorage.setItem(JOURNAL_QS_KEY, JSON.stringify(qs));
+}
+
+// Build question objects from plain string labels (from sheet)
+function buildQsFromLabels(morningLabels, eveningLabels) {
+  const morning = morningLabels.map((label, i) => {
+    const id = 'm' + i;
+    if (i === 1 && label.toLowerCase().includes('priorit')) return { id, label, hint: '', type: 'priorities' };
+    return { id, label, hint: '' };
+  });
+  const evening = eveningLabels.map((label, i) => {
+    const id = 'e' + i;
+    if (i === 0 && label.toLowerCase().includes('did i do')) return { id, label, hint: '', type: 'radio' };
+    return { id, label, hint: '' };
+  });
+  return { morning, evening };
 }
 
 // TASKS STORAGE
@@ -186,6 +240,7 @@ function switchTab(tab) {
 
 // JOURNAL
 let journalMode = 'morning';
+
 function switchJournal(mode) {
   journalMode = mode;
   $('morning-journal').classList.toggle('hidden', mode !== 'morning');
@@ -194,59 +249,126 @@ function switchJournal(mode) {
   $('btn-evening').classList.toggle('active', mode === 'evening');
   loadJournalEntry(mode);
 }
+
 function renderJournalDate() {
   const d = new Date();
   $('journal-date').textContent = fmt(d);
+  renderJournalForm('morning');
+  renderJournalForm('evening');
   loadJournalEntry(journalMode);
 }
+
+// Build the form HTML dynamically from stored questions
+function renderJournalForm(mode) {
+  const qs     = getJournalQuestions();
+  const questions = mode === 'morning' ? qs.morning : qs.evening;
+  const container = $(mode === 'morning' ? 'morning-journal' : 'evening-journal');
+
+  let html = '';
+  questions.forEach((q, i) => {
+    const num = i + 1;
+    const hintHtml = q.hint ? `<p class="field-hint">${q.hint}</p>` : '';
+
+    if (q.type === 'priorities') {
+      html += `<div class="journal-field">
+        <label class="field-label">${num}. ${q.label}</label>
+        <input id="jq-${q.id}-0" class="field-input" placeholder="Priority 1" />
+        <input id="jq-${q.id}-1" class="field-input" placeholder="Priority 2" />
+        <input id="jq-${q.id}-2" class="field-input" placeholder="Priority 3" />
+      </div>`;
+    } else if (q.type === 'radio') {
+      html += `<div class="journal-field">
+        <label class="field-label">${num}. ${q.label}</label>
+        <div class="radio-group">
+          <label class="radio-opt"><input type="radio" name="jq-${q.id}-radio" value="Yes" /> Yes</label>
+          <label class="radio-opt"><input type="radio" name="jq-${q.id}-radio" value="Partially" /> Partially</label>
+          <label class="radio-opt"><input type="radio" name="jq-${q.id}-radio" value="No" /> No</label>
+        </div>
+        <textarea id="jq-${q.id}-why" class="field-input" rows="2" placeholder="Why?"></textarea>
+      </div>`;
+    } else {
+      html += `<div class="journal-field">
+        <label class="field-label">${num}. ${q.label}</label>
+        ${hintHtml}
+        <textarea id="jq-${q.id}" class="field-input" rows="2"></textarea>
+      </div>`;
+    }
+  });
+
+  const btnLabel = mode === 'morning' ? 'Save Morning Entry' : 'Save Evening Entry';
+  html += `<button class="save-btn" onclick="saveJournal('${mode}')">${btnLabel}</button>`;
+  container.innerHTML = html;
+}
+
 function saveJournal(mode) {
-  const d = new Date();
-  let data = {};
+  const d   = new Date();
+  const qs  = getJournalQuestions();
+  const questions = mode === 'morning' ? qs.morning : qs.evening;
+  const data = { mode, date: d.toISOString().slice(0,10) };
+
+  questions.forEach(q => {
+    if (q.type === 'priorities') {
+      data[q.id] = [
+        (document.getElementById('jq-' + q.id + '-0')?.value || '').trim(),
+        (document.getElementById('jq-' + q.id + '-1')?.value || '').trim(),
+        (document.getElementById('jq-' + q.id + '-2')?.value || '').trim(),
+      ];
+      // keep legacy 'priorities' key for backward compat
+      if (q.id === 'm1') data.priorities = data[q.id];
+    } else if (q.type === 'radio') {
+      const checked = document.querySelector(`input[name="jq-${q.id}-radio"]:checked`);
+      data[q.id]        = checked ? checked.value : '';
+      data[q.id + '_why'] = (document.getElementById('jq-' + q.id + '-why')?.value || '').trim();
+    } else {
+      data[q.id] = (document.getElementById('jq-' + q.id)?.value || '').trim();
+    }
+  });
+
+  // Legacy keys for sheet sync compatibility
   if (mode === 'morning') {
-    data = {
-      mode: 'morning',
-      date: d.toISOString().slice(0,10),
-      feeling: $('m-feeling').value.trim(),
-      priorities: [$('m-p1').value.trim(), $('m-p2').value.trim(), $('m-p3').value.trim()],
-      win: $('m-win').value.trim(),
-      avoid: $('m-avoid').value.trim(),
-    };
+    data.feeling = data['m0'] || '';
+    data.win     = data['m2'] || '';
+    data.avoid   = data['m3'] || '';
   } else {
-    const checked = document.querySelector('input[name="e-did"]:checked');
-    data = {
-      mode: 'evening',
-      date: d.toISOString().slice(0,10),
-      did: checked ? checked.value : '',
-      didWhy: $('e-did-why').value.trim(),
-      well: $('e-well').value.trim(),
-      wrong: $('e-wrong').value.trim(),
-      different: $('e-different').value.trim(),
-      grateful: $('e-grateful').value.trim(),
-    };
+    data.feeling   = data['e0'] || '';
+    data.well      = data['e1'] || '';
+    data.wrong     = data['e2'] || '';
+    data.different = data['e3'] || '';
+    data.grateful  = data['e4'] || '';
   }
+
   setSynced(key(mode, d), JSON.stringify(data));
   showToast('Entry saved ✓');
 }
+
 function loadJournalEntry(mode) {
-  const d = new Date();
+  const d      = new Date();
   const stored = localStorage.getItem(key(mode, d));
   if (!stored) return;
-  const data = JSON.parse(stored);
-  if (mode === 'morning') {
-    $('m-feeling').value = data.feeling || '';
-    $('m-p1').value = data.priorities?.[0] || '';
-    $('m-p2').value = data.priorities?.[1] || '';
-    $('m-p3').value = data.priorities?.[2] || '';
-    $('m-win').value = data.win || '';
-    $('m-avoid').value = data.avoid || '';
-  } else {
-    if (data.did) { const r = document.querySelector(`input[name="e-did"][value="${data.did}"]`); if (r) r.checked = true; }
-    $('e-did-why').value = data.didWhy || '';
-    $('e-well').value = data.well || '';
-    $('e-wrong').value = data.wrong || '';
-    $('e-different').value = data.different || '';
-    $('e-grateful').value = data.grateful || '';
-  }
+  const data   = JSON.parse(stored);
+  const qs     = getJournalQuestions();
+  const questions = mode === 'morning' ? qs.morning : qs.evening;
+
+  questions.forEach(q => {
+    if (q.type === 'priorities') {
+      const vals = data[q.id] || data.priorities || [];
+      ['0','1','2'].forEach((s,i) => {
+        const el = document.getElementById('jq-' + q.id + '-' + s);
+        if (el) el.value = vals[i] || '';
+      });
+    } else if (q.type === 'radio') {
+      const val = data[q.id] || data.did || '';
+      if (val) {
+        const r = document.querySelector(`input[name="jq-${q.id}-radio"][value="${val}"]`);
+        if (r) r.checked = true;
+      }
+      const why = document.getElementById('jq-' + q.id + '-why');
+      if (why) why.value = data[q.id + '_why'] || data.didWhy || '';
+    } else {
+      const el = document.getElementById('jq-' + q.id);
+      if (el) el.value = data[q.id] || '';
+    }
+  });
 }
 
 // HISTORY
@@ -456,9 +578,8 @@ window.deleteTask = function(idx) {
 document.addEventListener('DOMContentLoaded', async () => {
   renderJournalDate();
   if (getSyncUrl()) {
-    // Always fetch latest tasks from Settings sheet first, then pull journal/batman data
     await fetchSettingsFromSheet();
-    renderJournalDate();
+    renderJournalDate(); // re-render with fresh questions
     pullSync(true).then(() => {
       if (document.querySelector('.tab.active')?.id === 'tab-journal') renderJournalDate();
     });
