@@ -2,6 +2,111 @@ const $ = id => document.getElementById(id);
 const fmt = d => d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
 const key = (type, d) => `${type}::${d.toISOString().slice(0,10)}`;
 
+// ====== GOOGLE SHEETS SYNC ======
+const SYNC_URL_KEY = 'sync_url';
+const SYNC_META_KEY = '_sync_meta';
+const SYNC_LAST_KEY = '_sync_last';
+const SYNC_PREFIXES = ['morning::', 'evening::', 'batman::', 'custom_tasks'];
+
+function getSyncUrl() { return localStorage.getItem(SYNC_URL_KEY) || ''; }
+function setSyncUrl(url) { localStorage.setItem(SYNC_URL_KEY, url.trim()); }
+function isSyncKey(k) { return SYNC_PREFIXES.some(p => k === p || k.startsWith(p)); }
+function getSyncMeta() { try { return JSON.parse(localStorage.getItem(SYNC_META_KEY) || '{}'); } catch { return {}; } }
+function setSyncMeta(meta) { localStorage.setItem(SYNC_META_KEY, JSON.stringify(meta)); }
+function setSyncStatus(msg) { localStorage.setItem(SYNC_LAST_KEY, msg); const el = $('sync-status'); if (el) el.textContent = msg; }
+
+// Use this instead of localStorage.setItem for any key that should sync
+function setSynced(k, value) {
+  const now = Date.now();
+  localStorage.setItem(k, value);
+  const meta = getSyncMeta();
+  meta[k] = now;
+  setSyncMeta(meta);
+  queuePush(k, value, now);
+}
+
+let pushQueue = [];
+let pushTimer = null;
+function queuePush(key, value, updatedAt) {
+  pushQueue.push({ key, value, updatedAt });
+  if (pushTimer) clearTimeout(pushTimer);
+  pushTimer = setTimeout(flushPushQueue, 700);
+}
+async function flushPushQueue() {
+  const url = getSyncUrl();
+  if (!url || pushQueue.length === 0) return;
+  const records = pushQueue;
+  pushQueue = [];
+  try {
+    await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // avoids CORS preflight on Apps Script
+      body: JSON.stringify({ records })
+    });
+    setSyncStatus('Last synced: ' + new Date().toLocaleString('en-GB'));
+  } catch (e) {
+    pushQueue = records.concat(pushQueue); // retry on next push/sync
+  }
+}
+
+// Push every locally-stored synced key (used for first connect / manual "Sync Now")
+function pushAllLocal() {
+  const meta = getSyncMeta();
+  let changed = false;
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (isSyncKey(k)) {
+      if (!meta[k]) { meta[k] = Date.now(); changed = true; }
+      queuePush(k, localStorage.getItem(k), meta[k]);
+    }
+  }
+  if (changed) setSyncMeta(meta);
+  flushPushQueue();
+}
+
+// Pull remote state and apply anything newer than what we have locally
+async function pullSync(silent) {
+  const url = getSyncUrl();
+  if (!url) return;
+  try {
+    const res = await fetch(url);
+    const remote = await res.json();
+    const meta = getSyncMeta();
+    let changed = false;
+    for (const k in remote) {
+      const remoteTime = Number(remote[k].updatedAt) || 0;
+      const localTime = meta[k] || 0;
+      if (remoteTime > localTime) {
+        localStorage.setItem(k, remote[k].value);
+        meta[k] = remoteTime;
+        changed = true;
+      }
+    }
+    setSyncMeta(meta);
+    setSyncStatus('Last synced: ' + new Date().toLocaleString('en-GB'));
+    if (changed && !silent) {
+      const activeId = document.querySelector('.tab.active')?.id;
+      if (activeId) switchTab(activeId.replace('tab-', ''));
+      showToast('Synced from Sheet ✓');
+    }
+  } catch (e) {
+    setSyncStatus('Sync failed — offline?');
+  }
+}
+
+window.syncNow = async function() {
+  if (!getSyncUrl()) { showToast('Add a Sheet URL first'); return; }
+  showToast('Syncing…');
+  await pullSync();
+  pushAllLocal();
+};
+window.saveSyncUrl = function() {
+  const val = $('sync-url-input').value;
+  setSyncUrl(val);
+  showToast(val ? 'Sync URL saved' : 'Sync URL cleared');
+  if (val) window.syncNow();
+};
+
 function showToast(msg) {
   let t = document.querySelector('.toast');
   if (!t) { t = document.createElement('div'); t.className = 'toast'; document.body.appendChild(t); }
@@ -30,7 +135,7 @@ function getTasks() {
 }
 
 function saveTasks(tasks) {
-  localStorage.setItem(TASKS_STORAGE_KEY, JSON.stringify(tasks));
+  setSynced(TASKS_STORAGE_KEY, JSON.stringify(tasks));
   if (document.querySelector('#tab-todos.active')) renderTodos();
   if (document.querySelector('#tab-history.active')) renderHistory();
   if (document.querySelector('#tab-settings.active')) renderSettings();
@@ -53,6 +158,7 @@ function switchTab(tab) {
   else if (tab === 'todos') renderTodos();
   else if (tab === 'history') renderHistory();
   else if (tab === 'settings') renderSettings();
+  if (getSyncUrl() && (tab === 'history' || tab === 'settings')) pullSync(true);
 }
 
 // JOURNAL
@@ -95,7 +201,7 @@ function saveJournal(mode) {
       grateful: $('e-grateful').value.trim(),
     };
   }
-  localStorage.setItem(key(mode, d), JSON.stringify(data));
+  setSynced(key(mode, d), JSON.stringify(data));
   showToast('Entry saved ✓');
 }
 function loadJournalEntry(mode) {
@@ -253,7 +359,7 @@ window.toggleTask = function(taskId, dateKey) {
   let state = {};
   try { state = JSON.parse(localStorage.getItem(stateKey) || '{}'); } catch {}
   state[taskId] = !state[taskId];
-  localStorage.setItem(stateKey, JSON.stringify(state));
+  setSynced(stateKey, JSON.stringify(state));
   renderDaySchedule();
   const tasks = getTasks();
   const dow = new Date(dateKey+'T00:00:00').getDay();
@@ -265,6 +371,10 @@ window.toggleTask = function(taskId, dateKey) {
 
 // SETTINGS
 function renderSettings() {
+  const urlInput = $('sync-url-input');
+  if (urlInput && document.activeElement !== urlInput) urlInput.value = getSyncUrl();
+  const statusEl = $('sync-status');
+  if (statusEl) statusEl.textContent = localStorage.getItem(SYNC_LAST_KEY) || (getSyncUrl() ? 'Not synced yet' : 'No Sheet connected');
   const tasks = getTasks();
   const container = $('tasks-list');
   if (tasks.length === 0) {
@@ -322,5 +432,6 @@ window.deleteTask = function(idx) {
 // INIT
 document.addEventListener('DOMContentLoaded', () => {
   renderJournalDate();
+  if (getSyncUrl()) pullSync(true).then(() => { if (document.querySelector('.tab.active')?.id === 'tab-journal') renderJournalDate(); });
   if ('serviceWorker' in navigator) { navigator.serviceWorker.register('sw.js').catch(err => console.log('SW:', err)); }
 });

@@ -129,6 +129,20 @@
     <!-- SETTINGS TAB -->
     <div id="tab-settings" class="tab">
       <div class="page-header"><h2 class="page-title">Edit Tasks</h2><span class="today-date"></span></div>
+
+      <!-- Google Sheets sync -->
+      <div class="settings-intro">
+        <p><strong style="color:var(--gold)">Google Sheets Sync</strong> — two-way sync of journal entries, task checkmarks and your task list across devices.</p>
+      </div>
+      <div class="add-task-form">
+        <input type="url" id="sync-url-input" placeholder="Paste your Apps Script Web App URL (…/exec)" class="field-input" />
+        <div style="display:flex; gap:10px;">
+          <button class="save-btn" style="flex:1" onclick="saveSyncUrl()">💾 Save URL</button>
+          <button class="save-btn" style="flex:1; background:var(--surface2); color:var(--text); border:1px solid var(--border)" onclick="syncNow()">🔄 Sync Now</button>
+        </div>
+        <p class="field-hint" id="sync-status">No Sheet connected</p>
+      </div>
+
       <div class="settings-intro">
         <p>Add, edit or delete tasks. Each task can be scheduled on specific weekdays.</p>
       </div>
