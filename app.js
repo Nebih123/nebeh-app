@@ -1,743 +1,729 @@
-const $ = id => document.getElementById(id);
-const fmt = d => d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
-const key = (type, d) => `${type}::${d.toISOString().slice(0,10)}`;
+/**
+ * NEBIH COMMAND CENTER - Frontend App
+ * Two-way sync with Google Sheets
+ */
 
-// ====== GOOGLE SHEETS SYNC ======
-const SYNC_URL_KEY  = 'sync_url';
-const SYNC_META_KEY = '_sync_meta';
-const SYNC_LAST_KEY = '_sync_last';
-const SYNC_PREFIXES = ['morning::', 'evening::', 'batman::', 'custom_tasks'];
+// ============================================================================
+// CONFIGURATION
+// ============================================================================
 
-function getSyncUrl()  { return localStorage.getItem(SYNC_URL_KEY) || ''; }
-function setSyncUrl(u) { localStorage.setItem(SYNC_URL_KEY, u.trim()); }
-function isSyncKey(k)  { return SYNC_PREFIXES.some(p => k === p || k.startsWith(p)); }
-function getSyncMeta() { try { return JSON.parse(localStorage.getItem(SYNC_META_KEY) || '{}'); } catch { return {}; } }
-function setSyncMeta(m){ localStorage.setItem(SYNC_META_KEY, JSON.stringify(m)); }
-function setSyncStatus(msg) {
-  localStorage.setItem(SYNC_LAST_KEY, msg);
-  const el = $('sync-status');
-  if (el) el.textContent = msg;
+const APP_CONFIG = {
+  // TODO: Replace with your Apps Script deployment URL
+  SCRIPT_URL: 'https://script.google.com/macros/d/YOUR_DEPLOYMENT_ID_HERE/userweb',
+  
+  // Feature flags
+  DEBUG_MODE: true,
+  SYNC_INTERVAL: 30000, // Auto-sync every 30 seconds
+  
+  // UI
+  THEME_COLOR: '#1a1a2e',
+  ACCENT_COLOR: '#d4af37'
+};
+
+// ============================================================================
+// GLOBAL STATE
+// ============================================================================
+
+let appState = {
+  tasks: [],
+  journal: {},
+  syncStatus: 'idle', // idle, syncing, success, error
+  lastSyncTime: null,
+  currentDate: new Date().toLocaleDateString('de-DE'), // German format: DD.MM.YYYY
+};
+
+// ============================================================================
+// LOGGING & DEBUG
+// ============================================================================
+
+const AppLogger = {
+  log: function(message, data = null) {
+    if (APP_CONFIG.DEBUG_MODE) {
+      console.log(`[${new Date().toLocaleTimeString()}] ${message}`, data || '');
+    }
+  },
+  error: function(message, error = null) {
+    console.error(`[ERROR] ${message}`, error || '');
+    updateSyncStatus('error', message);
+  },
+  info: function(message, data = null) {
+    console.info(`[INFO] ${message}`, data || '');
+  }
+};
+
+// ============================================================================
+// SYNC STATUS DISPLAY
+// ============================================================================
+
+function updateSyncStatus(status, message = '') {
+  appState.syncStatus = status;
+  
+  const statusEl = document.getElementById('sync-status');
+  if (!statusEl) return;
+  
+  const icons = {
+    idle: '⊘',
+    syncing: '↻',
+    success: '✓',
+    error: '✕'
+  };
+  
+  const colors = {
+    idle: '#888',
+    syncing: '#ffd700',
+    success: '#4caf50',
+    error: '#f44336'
+  };
+  
+  statusEl.textContent = icons[status] || '?';
+  statusEl.style.color = colors[status];
+  statusEl.title = message || status;
+  
+  AppLogger.log(`Sync status: ${status}`, { message });
 }
 
-// Use this instead of raw localStorage.setItem for anything that should sync
-function setSynced(k, value) {
-  const now = Date.now();
-  localStorage.setItem(k, value);
-  const meta = getSyncMeta();
-  meta[k] = now;
-  setSyncMeta(meta);
-  queuePush(k, value, now);
-}
+// ============================================================================
+// API CALLS - TASKS
+// ============================================================================
 
-let pushQueue = [];
-let pushTimer = null;
-function queuePush(k, value, updatedAt) {
-  pushQueue.push({ key: k, value, updatedAt });
-  if (pushTimer) clearTimeout(pushTimer);
-  pushTimer = setTimeout(flushPushQueue, 700);
-}
-async function flushPushQueue() {
-  const url = getSyncUrl();
-  if (!url || pushQueue.length === 0) return;
-  const records = pushQueue;
-  pushQueue = [];
+/**
+ * Fetch tasks from Google Sheets
+ */
+async function fetchTasks() {
   try {
-    await fetch(url, {
+    updateSyncStatus('syncing', 'Loading tasks...');
+    AppLogger.log('Fetching tasks from sheet...');
+    
+    const url = `${APP_CONFIG.SCRIPT_URL}?action=tasks`;
+    const response = await fetch(url);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    const data = await response.json();
+    
+    if (data.error) {
+      throw new Error(data.error);
+    }
+    
+    if (!Array.isArray(data)) {
+      throw new Error('Invalid response format: expected array');
+    }
+    
+    appState.tasks = data;
+    appState.lastSyncTime = new Date();
+    
+    AppLogger.log(`Successfully fetched ${data.length} tasks`, 
+      data.map(t => `${t.id} (${Object.values(t.days).filter(Boolean).length} days)`));
+    
+    updateSyncStatus('success', `Loaded ${data.length} tasks`);
+    renderTasks();
+    
+    return data;
+  } catch (error) {
+    AppLogger.error('Failed to fetch tasks', error);
+    updateSyncStatus('error', `Failed to fetch tasks: ${error.message}`);
+    return [];
+  }
+}
+
+/**
+ * Save task days back to sheet
+ */
+async function saveTasks() {
+  try {
+    updateSyncStatus('syncing', 'Saving tasks...');
+    AppLogger.log('Saving tasks to sheet...', { taskCount: appState.tasks.length });
+    
+    const payload = {
+      action: 'save-tasks',
+      tasks: appState.tasks
+    };
+    
+    const response = await fetch(APP_CONFIG.SCRIPT_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ records })
+      body: JSON.stringify(payload)
     });
-    setSyncStatus('Last synced: ' + new Date().toLocaleString('en-GB'));
-  } catch (_) {
-    pushQueue = records.concat(pushQueue); // retry on next push
-  }
-}
-
-function pushAllLocal() {
-  const meta = getSyncMeta();
-  let changed = false;
-  for (let i = 0; i < localStorage.length; i++) {
-    const k = localStorage.key(i);
-    if (isSyncKey(k)) {
-      if (!meta[k]) { meta[k] = Date.now(); changed = true; }
-      queuePush(k, localStorage.getItem(k), meta[k]);
+    
+    const data = await response.json();
+    
+    if (data.error) {
+      throw new Error(data.error);
     }
+    
+    AppLogger.log('Successfully saved tasks', data);
+    updateSyncStatus('success', `Saved ${data.tasksSaved} tasks`);
+    
+    return data;
+  } catch (error) {
+    AppLogger.error('Failed to save tasks', error);
+    updateSyncStatus('error', `Failed to save tasks: ${error.message}`);
+    return { error: error.message };
   }
-  if (changed) setSyncMeta(meta);
-  flushPushQueue();
 }
 
-async function pullSync(silent) {
-  const url = getSyncUrl();
-  if (!url) return;
+/**
+ * Add new task to sheet
+ */
+async function addTaskToSheet(task) {
   try {
-    const res    = await fetch(url + '?action=getAll');
-    const remote = await res.json();
-    const meta   = getSyncMeta();
-    let changed  = false;
-    for (const k in remote) {
-      // remote is flat { key: value } from Code.gs getAllKeys()
-      const remoteVal  = remote[k];
-      const remoteTime = meta[k] ? 0 : 1; // if we have no local timestamp, treat remote as newer
-      const localTime  = meta[k] || 0;
-      if (remoteTime > localTime || localTime === 0) {
-        if (typeof remoteVal === 'string') {
-          localStorage.setItem(k, remoteVal);
-        } else {
-          localStorage.setItem(k, JSON.stringify(remoteVal));
-        }
-        meta[k] = Date.now();
-        changed = true;
-      }
+    updateSyncStatus('syncing', `Adding task: ${task.id}...`);
+    AppLogger.log('Adding new task to sheet...', task);
+    
+    const payload = {
+      action: 'add-task',
+      task: task
+    };
+    
+    const response = await fetch(APP_CONFIG.SCRIPT_URL, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+    
+    const data = await response.json();
+    
+    if (data.error) {
+      throw new Error(data.error);
     }
-    setSyncMeta(meta);
-    setSyncStatus('Last synced: ' + new Date().toLocaleString('en-GB'));
-    if (changed && !silent) {
-      const activeId = document.querySelector('.tab.active')?.id;
-      if (activeId) switchTab(activeId.replace('tab-', ''));
-      showToast('Synced from Sheet ✓');
-    }
-  } catch (_) {
-    setSyncStatus('Sync failed — offline?');
+    
+    AppLogger.log('Successfully added task', data);
+    updateSyncStatus('success', `Added task: ${task.id}`);
+    
+    // Re-fetch to get updated data
+    await fetchTasks();
+    
+    return data;
+  } catch (error) {
+    AppLogger.error('Failed to add task', error);
+    updateSyncStatus('error', `Failed to add task: ${error.message}`);
+    return { error: error.message };
   }
 }
 
-window.syncNow = async function() {
-  if (!getSyncUrl()) { showToast('Add a Sheet URL first'); return; }
-  showToast('Syncing…');
-  setSyncStatus('Syncing…');
-  await fetchSettingsFromSheet();
-  await pullSync(false);
-  pushAllLocal();
-};
-
-// FIX #1: fetchSettingsFromSheet — calls ?action=getSettings which Code.gs now supports
-async function fetchSettingsFromSheet() {
-  const url = getSyncUrl();
-  if (!url) return;
+/**
+ * Delete task from sheet
+ */
+async function deleteTaskFromSheet(taskId) {
   try {
-    const res  = await fetch(url + '?action=getSettings');
-    const data = await res.json();
-    const meta = getSyncMeta();
-    const now  = Date.now();
-
-    // Tasks — sheet always wins when it returns data
-    if (data && Array.isArray(data.custom_tasks) && data.custom_tasks.length > 0) {
-      localStorage.setItem(TASKS_STORAGE_KEY, JSON.stringify(data.custom_tasks));
-      meta[TASKS_STORAGE_KEY] = now;
+    updateSyncStatus('syncing', `Deleting task: ${taskId}...`);
+    AppLogger.log('Deleting task from sheet...', { taskId });
+    
+    const payload = {
+      action: 'delete-task',
+      taskId: taskId
+    };
+    
+    const response = await fetch(APP_CONFIG.SCRIPT_URL, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+    
+    const data = await response.json();
+    
+    if (data.error) {
+      throw new Error(data.error);
     }
-
-    // Journal questions — build from sheet labels and save
-    if (data && Array.isArray(data.morning_questions) && data.morning_questions.length > 0) {
-      const qs = buildQsFromLabels(data.morning_questions, data.evening_questions || []);
-      saveJournalQuestions(qs);
-      meta[JOURNAL_QS_KEY] = now;
-    }
-
-    setSyncMeta(meta);
-  } catch (_) {
-    // Offline — localStorage fallback is used automatically
+    
+    AppLogger.log('Successfully deleted task', data);
+    updateSyncStatus('success', `Deleted task: ${taskId}`);
+    
+    // Re-fetch to get updated data
+    await fetchTasks();
+    
+    return data;
+  } catch (error) {
+    AppLogger.error('Failed to delete task', error);
+    updateSyncStatus('error', `Failed to delete task: ${error.message}`);
+    return { error: error.message };
   }
 }
 
-window.saveSyncUrl = function() {
-  const val = $('sync-url-input').value;
-  setSyncUrl(val);
-  showToast(val ? 'Sync URL saved' : 'Sync URL cleared');
-  if (val) window.syncNow();
-};
+// ============================================================================
+// API CALLS - JOURNAL
+// ============================================================================
 
-function showToast(msg) {
-  let t = document.querySelector('.toast');
-  if (!t) { t = document.createElement('div'); t.className = 'toast'; document.body.appendChild(t); }
-  t.textContent = msg;
-  t.classList.add('show');
-  setTimeout(() => t.classList.remove('show'), 2200);
-}
-
-// ====== JOURNAL QUESTIONS ======
-const JOURNAL_QS_KEY = 'journal_questions';
-
-const DEFAULT_MORNING_QS = [
-  { id: 'm0', label: 'Feeling right now',                      hint: 'Be honest — one sentence is enough' },
-  { id: 'm1', label: 'My 3 priorities today',                  hint: '',   type: 'priorities' },
-  { id: 'm2', label: 'What would make today a win',            hint: 'Just one thing — the most important' },
-  { id: 'm3', label: "What am I avoiding that I shouldn't be", hint: 'The uncomfortable question' },
-  { id: 'm4', label: 'Prays',                                  hint: '' },
-];
-
-const DEFAULT_EVENING_QS = [
-  { id: 'e0', label: 'Feeling right now',             hint: '' },
-  { id: 'e1', label: 'What went well today',           hint: '' },
-  { id: 'e2', label: 'What would I do differently',    hint: '' },
-  { id: 'e3', label: 'Gratitude — 3 things',          hint: '', type: 'gratitude' },
-  { id: 'e4', label: 'Prays',                          hint: '' },
-];
-
-function getJournalQuestions() {
+/**
+ * Fetch journal entry for specific date
+ */
+async function fetchJournalEntry(dateStr) {
   try {
-    const stored = localStorage.getItem(JOURNAL_QS_KEY);
-    if (stored) {
-      const parsed = JSON.parse(stored);
-      if (parsed.morning && parsed.evening) return parsed;
+    updateSyncStatus('syncing', `Loading journal for ${dateStr}...`);
+    AppLogger.log('Fetching journal entry...', { date: dateStr });
+    
+    const url = `${APP_CONFIG.SCRIPT_URL}?action=journal&date=${encodeURIComponent(dateStr)}`;
+    const response = await fetch(url);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
-  } catch(_) {}
-  return { morning: DEFAULT_MORNING_QS, evening: DEFAULT_EVENING_QS };
-}
-
-function saveJournalQuestions(qs) {
-  localStorage.setItem(JOURNAL_QS_KEY, JSON.stringify(qs));
-}
-
-// FIX #2: buildQsFromLabels — updated to match the new sheet question structure
-// Detects 'priorit' for morning triple-input, 'gratitude' for evening triple-input
-// No more 'did i do' radio since that question is gone from the sheet
-function buildQsFromLabels(morningLabels, eveningLabels) {
-  const morning = morningLabels.map((label, i) => {
-    const id = 'm' + i;
-    const low = label.toLowerCase();
-    if (low.includes('priorit')) return { id, label, hint: '', type: 'priorities' };
-    return { id, label, hint: '' };
-  });
-  const evening = eveningLabels.map((label, i) => {
-    const id = 'e' + i;
-    const low = label.toLowerCase();
-    if (low.includes('gratitude') || low.includes('grateful')) return { id, label, hint: '', type: 'gratitude' };
-    return { id, label, hint: '' };
-  });
-  return { morning, evening };
-}
-
-// ====== TASKS STORAGE ======
-const TASKS_STORAGE_KEY = 'custom_tasks';
-const DEFAULT_TASKS = [
-  { id: 'sleep',        name: 'Sleep (8h)',                              time: '05:00',         days: [0,1,2,3,4,5,6] },
-  { id: 'workout',      name: 'Workout',                                 time: '05:00 – 05:30', days: [1,4]            },
-  { id: 'read',         name: 'Read self-development book',              time: '05:30 – 06:00', days: [0,1,2,3,4,5,6] },
-  { id: 'biz',          name: 'Business building / Personal improvement',time: '06:00 – 07:00', days: [0,1,2,3,4,5,6] },
-  { id: 'work',         name: 'Accounting / Finance work',               time: '09:00 – 17:00', days: [0,1,2,3,4,5,6] },
-  { id: 'journal-task', name: 'Journal & plan tomorrow',                 time: '21:00 – 21:15', days: [0,1,2,3,4,5,6] },
-];
-
-function getTasks() {
-  const stored = localStorage.getItem(TASKS_STORAGE_KEY);
-  if (stored) { try { return JSON.parse(stored); } catch(_) {} }
-  return [...DEFAULT_TASKS];
-}
-
-function saveTasks(tasks) {
-  setSynced(TASKS_STORAGE_KEY, JSON.stringify(tasks));
-  if (document.querySelector('#tab-todos.active'))    renderTodos();
-  if (document.querySelector('#tab-history.active'))  renderHistory();
-  if (document.querySelector('#tab-settings.active')) renderSettings();
-}
-
-function resetAllTasks() {
-  if (confirm('⚠️ Reset to 6 default tasks? Your journal entries and checkmarks are kept.')) {
-    saveTasks([...DEFAULT_TASKS]);
-    showToast('Tasks reset to default');
+    
+    const data = await response.json();
+    
+    if (data.error) {
+      throw new Error(data.error);
+    }
+    
+    AppLogger.log('Successfully fetched journal entry', data);
+    updateSyncStatus('success', `Loaded journal`);
+    
+    return data;
+  } catch (error) {
+    AppLogger.error('Failed to fetch journal entry', error);
+    updateSyncStatus('error', `Failed to fetch journal: ${error.message}`);
+    return { error: error.message };
   }
 }
 
-// ====== TAB SWITCHING ======
-function switchTab(tab) {
-  document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
-  document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-  $(`tab-${tab}`).classList.add('active');
-  document.querySelector(`[data-tab="${tab}"]`).classList.add('active');
-  if (tab === 'journal')  renderJournalDate();
-  else if (tab === 'todos')    renderTodos();
-  else if (tab === 'history')  renderHistory();
-  else if (tab === 'settings') renderSettings();
-  if (getSyncUrl() && (tab === 'history' || tab === 'settings')) pullSync(true);
-}
-
-// ====== JOURNAL ======
-let journalMode = 'morning';
-
-function switchJournal(mode) {
-  journalMode = mode;
-  $('morning-journal').classList.toggle('hidden', mode !== 'morning');
-  $('evening-journal').classList.toggle('hidden', mode !== 'evening');
-  $('btn-morning').classList.toggle('active', mode === 'morning');
-  $('btn-evening').classList.toggle('active', mode === 'evening');
-  loadJournalEntry(mode);
-}
-
-function renderJournalDate() {
-  const d = new Date();
-  $('journal-date').textContent = fmt(d);
-  renderJournalForm('morning');
-  renderJournalForm('evening');
-  loadJournalEntry(journalMode);
-}
-
-// Build the form HTML from stored/sheet questions
-function renderJournalForm(mode) {
-  const qs        = getJournalQuestions();
-  const questions = mode === 'morning' ? qs.morning : qs.evening;
-  const container = $(mode === 'morning' ? 'morning-journal' : 'evening-journal');
-
-  let html = '';
-  questions.forEach((q, i) => {
-    const num      = i + 1;
-    const hintHtml = q.hint ? `<p class="field-hint">${q.hint}</p>` : '';
-
-    if (q.type === 'priorities') {
-      html += `<div class="journal-field">
-        <label class="field-label">${num}. ${q.label}</label>
-        <input id="jq-${q.id}-0" class="field-input" placeholder="Priority 1" />
-        <input id="jq-${q.id}-1" class="field-input" placeholder="Priority 2" />
-        <input id="jq-${q.id}-2" class="field-input" placeholder="Priority 3" />
-      </div>`;
-    } else if (q.type === 'gratitude') {
-      // FIX #3: new 'gratitude' type — 3 separate lines
-      html += `<div class="journal-field">
-        <label class="field-label">${num}. ${q.label}</label>
-        <input id="jq-${q.id}-0" class="field-input" placeholder="1. I'm grateful for…" />
-        <input id="jq-${q.id}-1" class="field-input" placeholder="2. I'm grateful for…" />
-        <input id="jq-${q.id}-2" class="field-input" placeholder="3. I'm grateful for…" />
-      </div>`;
-    } else {
-      html += `<div class="journal-field">
-        <label class="field-label">${num}. ${q.label}</label>
-        ${hintHtml}
-        <textarea id="jq-${q.id}" class="field-input" rows="2"></textarea>
-      </div>`;
+/**
+ * Save journal entry to sheet
+ * IMPORTANT: This saves ALL responses as an array
+ */
+async function saveJournalEntry(dateStr, responses) {
+  try {
+    // Validate responses
+    if (!Array.isArray(responses)) {
+      throw new Error('Responses must be an array');
     }
-  });
+    
+    if (responses.length === 0) {
+      throw new Error('No responses to save');
+    }
+    
+    updateSyncStatus('syncing', `Saving journal for ${dateStr}...`);
+    AppLogger.log('Saving journal entry...', { date: dateStr, responseCount: responses.length });
+    
+    const payload = {
+      action: 'save-journal',
+      date: dateStr,
+      responses: responses // Send all responses
+    };
+    
+    const response = await fetch(APP_CONFIG.SCRIPT_URL, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+    
+    const data = await response.json();
+    
+    if (data.error) {
+      throw new Error(data.error);
+    }
+    
+    AppLogger.log('Successfully saved journal entry', data);
+    updateSyncStatus('success', `Saved journal`);
+    
+    return data;
+  } catch (error) {
+    AppLogger.error('Failed to save journal entry', error);
+    updateSyncStatus('error', `Failed to save journal: ${error.message}`);
+    return { error: error.message };
+  }
+}
 
-  const btnLabel = mode === 'morning' ? '💾 Save Morning Entry' : '💾 Save Evening Entry';
-  html += `<button class="save-btn" onclick="saveJournal('${mode}')">${btnLabel}</button>`;
+/**
+ * Fetch all journal entries
+ */
+async function fetchAllJournalEntries() {
+  try {
+    updateSyncStatus('syncing', 'Loading all journal entries...');
+    AppLogger.log('Fetching all journal entries...');
+    
+    const url = `${APP_CONFIG.SCRIPT_URL}?action=journal-all`;
+    const response = await fetch(url);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    const data = await response.json();
+    
+    if (data.error) {
+      throw new Error(data.error);
+    }
+    
+    if (!Array.isArray(data)) {
+      throw new Error('Invalid response format: expected array');
+    }
+    
+    AppLogger.log(`Successfully fetched ${data.length} journal entries`);
+    updateSyncStatus('success', `Loaded ${data.length} journal entries`);
+    
+    return data;
+  } catch (error) {
+    AppLogger.error('Failed to fetch journal entries', error);
+    updateSyncStatus('error', `Failed to fetch journal entries: ${error.message}`);
+    return [];
+  }
+}
+
+// ============================================================================
+// TASK RENDERING
+// ============================================================================
+
+/**
+ * Render tasks in the UI
+ */
+function renderTasks() {
+  const container = document.getElementById('tasks-container');
+  if (!container) return;
+  
+  AppLogger.log(`Rendering ${appState.tasks.length} tasks`);
+  
+  if (appState.tasks.length === 0) {
+    container.innerHTML = '<p class="no-tasks">No tasks loaded. Try syncing.</p>';
+    return;
+  }
+  
+  container.innerHTML = appState.tasks.map((task, idx) => {
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    
+    return `
+      <div class="task-item" data-task-id="${task.id}">
+        <div class="task-header">
+          <strong>${task.name}</strong>
+          <span class="task-time">${task.time}</span>
+        </div>
+        <div class="task-days">
+          ${days.map(day => {
+            const isChecked = task.days[day.toLowerCase()] ? 'checked' : '';
+            return `
+              <label class="day-checkbox ${isChecked}">
+                <input type="checkbox" 
+                  ${isChecked ? 'checked' : ''} 
+                  onchange="updateTaskDay('${task.id}', '${day.toLowerCase()}', this.checked)">
+                <span>${day}</span>
+              </label>
+            `;
+          }).join('')}
+        </div>
+        <div class="task-actions">
+          <button onclick="deleteTaskUI('${task.id}')" class="btn-delete">Delete</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+/**
+ * Update task day when checkbox changes
+ */
+function updateTaskDay(taskId, day, isChecked) {
+  const task = appState.tasks.find(t => t.id === taskId);
+  if (!task) {
+    AppLogger.error('Task not found', { taskId });
+    return;
+  }
+  
+  // Update local state
+  task.days[day] = isChecked;
+  
+  AppLogger.log(`Updated task day`, { taskId, day, isChecked });
+  
+  // Auto-save after short delay
+  setTimeout(() => saveTasks(), 500);
+}
+
+/**
+ * Delete task from UI
+ */
+async function deleteTaskUI(taskId) {
+  if (!confirm(`Delete task "${taskId}"?`)) {
+    return;
+  }
+  
+  await deleteTaskFromSheet(taskId);
+}
+
+/**
+ * Add new task from UI
+ */
+async function addNewTaskUI() {
+  const id = prompt('Task ID (e.g., "reading"):');
+  if (!id) return;
+  
+  const name = prompt('Task name (e.g., "Read book"):');
+  if (!name) return;
+  
+  const time = prompt('Time (e.g., "09:00 - 10:00"):');
+  if (!time) return;
+  
+  const newTask = {
+    id: id.trim(),
+    name: name.trim(),
+    time: time.trim(),
+    days: {
+      sun: false,
+      mon: false,
+      tue: false,
+      wed: false,
+      thu: false,
+      fri: false,
+      sat: false
+    }
+  };
+  
+  await addTaskToSheet(newTask);
+}
+
+// ============================================================================
+// JOURNAL RENDERING
+// ============================================================================
+
+/**
+ * Render journal questions and answers
+ */
+async function renderJournal() {
+  const container = document.getElementById('journal-container');
+  if (!container) return;
+  
+  AppLogger.log('Rendering journal for date:', appState.currentDate);
+  
+  const entry = await fetchJournalEntry(appState.currentDate);
+  
+  if (entry.error) {
+    container.innerHTML = `<p class="error">Failed to load journal: ${entry.error}</p>`;
+    return;
+  }
+  
+  // Define journal questions
+  const questions = {
+    morning: [
+      'Feeling right now',
+      'My 3 priorities today',
+      'What would make today a win',
+      'What am I avoiding that I shouldn\'t be',
+      'Prays'
+    ],
+    evening: [
+      'Feeling right now',
+      'What went well today',
+      'What would I do differently',
+      'Gratitude — 3 things',
+      'Prays'
+    ]
+  };
+  
+  // Prepare data - if found, use existing; otherwise empty
+  let existingData = entry.data || [];
+  
+  // Build HTML
+  let html = `
+    <div class="journal-date">
+      <input type="date" id="journal-date-picker" value="${formatDateForInput(appState.currentDate)}" 
+        onchange="changeJournalDate(this.value)">
+    </div>
+  `;
+  
+  html += '<div class="journal-section">';
+  html += '<h3>🌅 Morning</h3>';
+  
+  questions.morning.forEach((q, idx) => {
+    const value = existingData[idx + 1] || ''; // +1 because index 0 is date
+    html += `
+      <div class="journal-q">
+        <label>${q}</label>
+        <textarea data-question-index="${idx}" data-section="morning" placeholder="...">${value}</textarea>
+      </div>
+    `;
+  });
+  
+  html += '</div>';
+  
+  html += '<div class="journal-section">';
+  html += '<h3>🌙 Evening</h3>';
+  
+  questions.evening.forEach((q, idx) => {
+    const dataIndex = questions.morning.length + idx + 1; // Offset by morning questions
+    const value = existingData[dataIndex] || '';
+    html += `
+      <div class="journal-q">
+        <label>${q}</label>
+        <textarea data-question-index="${idx}" data-section="evening" placeholder="...">${value}</textarea>
+      </div>
+    `;
+  });
+  
+  html += '</div>';
+  
+  html += `
+    <div class="journal-actions">
+      <button onclick="saveJournalUI()" class="btn-primary">Save Journal</button>
+      <button onclick="clearJournalUI()" class="btn-secondary">Clear</button>
+    </div>
+  `;
+  
   container.innerHTML = html;
 }
 
-// FIX #4: saveJournal — updated data keys to match what Code.gs writeJournalRow expects
-// Code.gs expects: morning → feeling, priorities, win, avoid
-//                  evening → feeling, went (not well!), different, grateful
-function saveJournal(mode) {
-  const d         = new Date();
-  const qs        = getJournalQuestions();
-  const questions = mode === 'morning' ? qs.morning : qs.evening;
-  const data      = { mode, date: d.toISOString().slice(0,10) };
+/**
+ * Format date string for HTML input
+ */
+function formatDateForInput(dateStr) {
+  // Convert "21.06.2026" to "2026-06-21"
+  const parts = dateStr.split('.');
+  if (parts.length === 3) {
+    return `${parts[2]}-${parts[1]}-${parts[0]}`;
+  }
+  return dateStr;
+}
 
-  questions.forEach(q => {
-    if (q.type === 'priorities') {
-      data[q.id] = [
-        (document.getElementById('jq-' + q.id + '-0')?.value || '').trim(),
-        (document.getElementById('jq-' + q.id + '-1')?.value || '').trim(),
-        (document.getElementById('jq-' + q.id + '-2')?.value || '').trim(),
-      ];
-    } else if (q.type === 'gratitude') {
-      data[q.id] = [
-        (document.getElementById('jq-' + q.id + '-0')?.value || '').trim(),
-        (document.getElementById('jq-' + q.id + '-1')?.value || '').trim(),
-        (document.getElementById('jq-' + q.id + '-2')?.value || '').trim(),
-      ];
-    } else {
-      data[q.id] = (document.getElementById('jq-' + q.id)?.value || '').trim();
-    }
+/**
+ * Format date from input to display format
+ */
+function formatDateFromInput(inputDate) {
+  // Convert "2026-06-21" to "21.06.2026"
+  const parts = inputDate.split('-');
+  if (parts.length === 3) {
+    return `${parts[2]}.${parts[1]}.${parts[0]}`;
+  }
+  return inputDate;
+}
+
+/**
+ * Change journal date
+ */
+async function changeJournalDate(inputDate) {
+  appState.currentDate = formatDateFromInput(inputDate);
+  AppLogger.log('Journal date changed to:', appState.currentDate);
+  await renderJournal();
+}
+
+/**
+ * Save journal from UI
+ */
+async function saveJournalUI() {
+  const textareas = document.querySelectorAll('#journal-container textarea');
+  
+  if (textareas.length === 0) {
+    AppLogger.error('No journal inputs found');
+    return;
+  }
+  
+  // Collect all responses in order: [date, morning1-5, evening1-5]
+  const responses = [];
+  
+  textareas.forEach(textarea => {
+    const value = textarea.value.trim();
+    responses.push(value);
   });
-
-  // Legacy keys — keep for Code.gs writeJournalRow compatibility
-  // Morning: feeling, priorities (array), win, avoid
-  if (mode === 'morning') {
-    const qs = getJournalQuestions().morning;
-    qs.forEach(q => {
-      const low = q.label.toLowerCase();
-      if (low.includes('feeling') || low.includes('feel'))     data.feeling    = data[q.id] || '';
-      if (q.type === 'priorities')                             data.priorities = data[q.id] || [];
-      if (low.includes('win') || low.includes('make today'))   data.win        = data[q.id] || '';
-      if (low.includes('avoid'))                               data.avoid      = data[q.id] || '';
-      if (low.includes('pray'))                                data.prays      = data[q.id] || '';
-    });
+  
+  AppLogger.log('Saving journal responses...', { 
+    date: appState.currentDate, 
+    responseCount: responses.length,
+    responses: responses 
+  });
+  
+  const result = await saveJournalEntry(appState.currentDate, responses);
+  
+  if (!result.error) {
+    alert('Journal saved successfully! ✓');
   } else {
-    // Evening: feeling, went (what went well), different, grateful (array), prays
-    const qs = getJournalQuestions().evening;
-    qs.forEach(q => {
-      const low = q.label.toLowerCase();
-      if (low.includes('feeling') || low.includes('feel'))                 data.feeling   = data[q.id] || '';
-      if (low.includes('went well') || low.includes('well today'))         data.went      = data[q.id] || '';
-      if (low.includes('different') || low.includes('differently'))        data.different = data[q.id] || '';
-      if (q.type === 'gratitude' || low.includes('gratitud') || low.includes('grateful')) data.grateful = data[q.id] || [];
-      if (low.includes('pray'))                                            data.prays     = data[q.id] || '';
-    });
-    // Backward compat key
-    data.well = data.went || '';
+    alert(`Error saving journal: ${result.error}`);
   }
-
-  setSynced(key(mode, d), JSON.stringify(data));
-  showToast('Entry saved ✓');
 }
 
-function loadJournalEntry(mode) {
-  const d      = new Date();
-  const stored = localStorage.getItem(key(mode, d));
-  if (!stored) return;
-  let data;
-  try { data = JSON.parse(stored); } catch(_) { return; }
-  const qs        = getJournalQuestions();
-  const questions = mode === 'morning' ? qs.morning : qs.evening;
-
-  questions.forEach(q => {
-    if (q.type === 'priorities') {
-      const vals = data[q.id] || data.priorities || [];
-      ['0','1','2'].forEach((s, i) => {
-        const el = document.getElementById('jq-' + q.id + '-' + s);
-        if (el) el.value = vals[i] || '';
-      });
-    } else if (q.type === 'gratitude') {
-      const vals = data[q.id] || (Array.isArray(data.grateful) ? data.grateful : []);
-      ['0','1','2'].forEach((s, i) => {
-        const el = document.getElementById('jq-' + q.id + '-' + s);
-        if (el) el.value = vals[i] || '';
-      });
-    } else {
-      const el = document.getElementById('jq-' + q.id);
-      if (el) {
-        // Try the direct id key first, then legacy field names
-        el.value = data[q.id] || '';
-      }
-    }
+/**
+ * Clear journal inputs
+ */
+function clearJournalUI() {
+  if (!confirm('Clear all entries for this date?')) {
+    return;
+  }
+  
+  const textareas = document.querySelectorAll('#journal-container textarea');
+  textareas.forEach(textarea => {
+    textarea.value = '';
   });
+  
+  AppLogger.log('Cleared journal entries');
 }
 
-// ====== HISTORY ======
-function renderHistory() {
-  $('history-date').textContent = fmt(new Date());
-  renderHistoryEntries();
-  renderTaskStats();
-}
+// ============================================================================
+// INITIALIZATION
+// ============================================================================
 
-function renderHistoryEntries() {
-  const container = $('history-entries-list');
-  const entries   = [];
-  for (let i = 0; i < localStorage.length; i++) {
-    const k = localStorage.key(i);
-    if (k.startsWith('morning::') || k.startsWith('evening::')) {
-      try { const d = JSON.parse(localStorage.getItem(k)); entries.push({ k, d }); } catch(_) {}
-    }
-  }
-  entries.sort((a, b) => b.d.date.localeCompare(a.d.date));
-  if (entries.length === 0) {
-    container.innerHTML = '<p style="color:var(--text-dim);padding:20px 0">No journal entries yet.</p>';
+/**
+ * Initialize the app
+ */
+async function initApp() {
+  AppLogger.log('Initializing Nebih Command Center...');
+  
+  updateSyncStatus('syncing', 'Initializing...');
+  
+  // Validate configuration
+  if (APP_CONFIG.SCRIPT_URL.includes('YOUR_DEPLOYMENT_ID')) {
+    alert('❌ ERROR: Update SCRIPT_URL in app.js with your Apps Script deployment URL');
+    updateSyncStatus('error', 'Configuration incomplete');
     return;
   }
-  container.innerHTML = entries.map(({ k, d }) => {
-    const dateStr = new Date(d.date + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
-    const isToday = d.date === new Date().toISOString().slice(0,10);
-    // Preview: show first non-empty text field
-    let preview = '';
-    if (d.mode === 'morning') {
-      preview = d.feeling || (Array.isArray(d.priorities) ? d.priorities.filter(Boolean).join(' · ') : '') || d.win || '';
-    } else {
-      preview = d.feeling || d.went || d.well || '';
+  
+  // Load initial data
+  await Promise.all([
+    fetchTasks(),
+    renderJournal()
+  ]);
+  
+  updateSyncStatus('success', 'Ready');
+  
+  // Setup auto-sync
+  setInterval(async () => {
+    if (appState.syncStatus === 'idle' || appState.syncStatus === 'success') {
+      await fetchTasks();
     }
-    return `<div class="entry-card" onclick="showEntry('${k}')">
-      <div class="entry-meta">
-        <span class="entry-date">${dateStr}${isToday ? ' — Today' : ''}</span>
-        <span class="entry-type">${d.mode === 'morning' ? '🌅 Morning' : '🌙 Evening'}</span>
-      </div>
-      <p class="entry-preview">${preview || '(no preview)'}</p>
-    </div>`;
-  }).join('');
+  }, APP_CONFIG.SYNC_INTERVAL);
+  
+  AppLogger.log('App initialization complete');
 }
 
-// FIX #5: showEntry modal — now reads the correct field names (went not well, no more did/didWhy)
-// Dynamically renders all saved fields based on the question labels so it never breaks again
-window.showEntry = function(k) {
-  const d       = JSON.parse(localStorage.getItem(k));
-  const dateStr = new Date(d.date + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
-  const qs      = getJournalQuestions();
-  const questions = d.mode === 'morning' ? qs.morning : qs.evening;
-
-  let content = '';
-  questions.forEach(q => {
-    const val = d[q.id];
-    if (q.type === 'priorities') {
-      const list = (Array.isArray(val) ? val : (d.priorities || [])).filter(Boolean);
-      content += `<div class="modal-item"><strong>${q.label}</strong><p>${list.length ? list.map((p,i)=>`${i+1}. ${p}`).join('<br>') : '—'}</p></div>`;
-    } else if (q.type === 'gratitude') {
-      const list = (Array.isArray(val) ? val : (Array.isArray(d.grateful) ? d.grateful : [])).filter(Boolean);
-      content += `<div class="modal-item"><strong>${q.label}</strong><p>${list.length ? list.map((g,i)=>`${i+1}. ${g}`).join('<br>') : '—'}</p></div>`;
-    } else {
-      // Also check legacy keys
-      const legacyVal = (() => {
-        const low = q.label.toLowerCase();
-        if (d.mode === 'morning') {
-          if (low.includes('feeling') || low.includes('feel')) return d.feeling;
-          if (low.includes('win') || low.includes('make today')) return d.win;
-          if (low.includes('avoid')) return d.avoid;
-          if (low.includes('pray')) return d.prays;
-        } else {
-          if (low.includes('feeling') || low.includes('feel')) return d.feeling;
-          if (low.includes('went well') || low.includes('well today')) return d.went || d.well;
-          if (low.includes('different')) return d.different;
-          if (low.includes('pray')) return d.prays;
-        }
-        return undefined;
-      })();
-      const display = val || legacyVal || '—';
-      content += `<div class="modal-item"><strong>${q.label}</strong><p>${display}</p></div>`;
-    }
-  });
-
-  const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
-  overlay.innerHTML = `<div class="modal-sheet">
-    <div class="modal-handle"></div>
-    <div class="modal-title">${dateStr} · ${d.mode === 'morning' ? '🌅 Morning' : '🌙 Evening'}</div>
-    ${content}
-    <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">Close</button>
-  </div>`;
-  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
-  document.body.appendChild(overlay);
-};
-
-function renderTaskStats() {
-  const tasks     = getTasks();
-  const container = $('task-stats-container');
-  const taskStats = {};
-  tasks.forEach(t => { taskStats[t.id] = { name: t.name, scheduledCount: 0, completedCount: 0, days: t.days }; });
-  for (let i = 0; i < localStorage.length; i++) {
-    const k = localStorage.key(i);
-    if (k.startsWith('batman::')) {
-      const dateStr = k.split('::')[1];
-      const date    = new Date(dateStr + 'T00:00:00');
-      if (isNaN(date.getTime())) continue;
-      const dow   = date.getDay();
-      let state = {};
-      try { state = JSON.parse(localStorage.getItem(k) || '{}'); } catch(_) {}
-      for (const taskId in taskStats) {
-        if (taskStats[taskId].days.includes(dow)) {
-          taskStats[taskId].scheduledCount++;
-          if (state[taskId] === true) taskStats[taskId].completedCount++;
-        }
-      }
-    }
-  }
-  const hasData = Object.values(taskStats).some(t => t.scheduledCount > 0);
-  if (!hasData) {
-    container.innerHTML = '<p style="color:var(--text-dim);padding:20px 0">No task data yet. Start checking off your Batman schedule!</p>';
-    return;
-  }
-  container.innerHTML = Object.values(taskStats).map(t => {
-    const percent = t.scheduledCount === 0 ? 0 : Math.round((t.completedCount / t.scheduledCount) * 100);
-    return `<div class="stat-card">
-      <div class="stat-header"><span class="stat-name">${t.name}</span><span class="stat-percent">${percent}%</span></div>
-      <div class="progress-bar-bg"><div class="progress-bar-fill" style="width: ${percent}%"></div></div>
-      <div class="stat-detail">${t.completedCount} / ${t.scheduledCount} scheduled days</div>
-    </div>`;
-  }).join('');
+/**
+ * Manual sync button
+ */
+async function manualSync() {
+  await Promise.all([
+    fetchTasks(),
+    renderJournal()
+  ]);
 }
 
-// ====== BATMAN SCHEDULE ======
-let weekOffset = 0;
-let selectedDay = null;
+// ============================================================================
+// UTILITY FUNCTIONS
+// ============================================================================
 
-function getWeekDays(offset = 0) {
-  const today = new Date(); today.setHours(0,0,0,0);
-  const mon   = new Date(today);
-  const dow   = today.getDay();
-  const diff  = dow === 0 ? -6 : 1 - dow;
-  mon.setDate(today.getDate() + diff + offset * 7);
-  return Array.from({ length: 7 }, (_, i) => { const d = new Date(mon); d.setDate(mon.getDate() + i); return d; });
+/**
+ * Get debug info from backend
+ */
+async function getDebugInfo() {
+  try {
+    const url = `${APP_CONFIG.SCRIPT_URL}?action=debug`;
+    const response = await fetch(url);
+    const data = await response.json();
+    
+    console.log('=== DEBUG INFO ===');
+    console.log(data);
+    console.log('=== LOCAL STATE ===');
+    console.log(appState);
+    
+    return data;
+  } catch (error) {
+    console.error('Debug error:', error);
+  }
 }
 
-function renderTodos() {
-  const today = new Date(); today.setHours(0,0,0,0);
-  const days  = getWeekDays(weekOffset);
-  const wStart = days[0].toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
-  const wEnd   = days[6].toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
-  $('week-label').textContent  = `${wStart} – ${wEnd}`;
-  $('todos-date').textContent  = fmt(today);
-
-  if (selectedDay === null || weekOffset !== (selectedDay._weekOffset ?? 0)) {
-    if (weekOffset === 0) {
-      const todayInWeek = days.find(d => d.getTime() === today.getTime());
-      selectedDay = todayInWeek || days[0];
-    } else {
-      selectedDay = days[0];
-    }
-    if (selectedDay) selectedDay._weekOffset = weekOffset;
-  }
-
-  const tabContainer = $('day-tabs');
-  tabContainer.innerHTML = days.map(d => {
-    const isToday    = d.getTime() === today.getTime();
-    const isSelected = selectedDay && d.toISOString().slice(0,10) === selectedDay.toISOString().slice(0,10);
-    const dayName    = d.toLocaleDateString('en-GB', { weekday: 'short' });
-    const dayNum     = d.getDate();
-    return `<button class="day-tab ${isSelected ? 'active' : ''} ${isToday && !isSelected ? 'today-marker' : ''}"
-      onclick="selectDay(new Date('${d.toISOString()}'))">
-      <span class="day-num">${dayNum}</span>${dayName}
-    </button>`;
-  }).join('');
-
-  renderDaySchedule();
+/**
+ * Auto-initialize on page load
+ */
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initApp);
+} else {
+  initApp();
 }
 
-window.selectDay = function(d) { selectedDay = new Date(d); selectedDay._weekOffset = weekOffset; renderTodos(); };
-window.shiftWeek = function(dir) { weekOffset += dir; selectedDay = null; renderTodos(); };
+// ============================================================================
+// EXPORTS FOR BROWSER CONSOLE
+// ============================================================================
 
-function renderDaySchedule() {
-  if (!selectedDay) return;
-  const d       = selectedDay;
-  const dow     = d.getDay();
-  const dateKey = d.toISOString().slice(0,10);
-  const tasks   = getTasks().filter(t => t.days.includes(dow));
-  let state = {};
-  try { state = JSON.parse(localStorage.getItem(`batman::${dateKey}`) || '{}'); } catch(_) {}
-  const list = $('schedule-list');
-  if (tasks.length === 0) {
-    list.innerHTML = '<p style="color:var(--text-dim);font-size:14px;text-align:center;padding:40px 0">No tasks scheduled for this day.</p>';
-    return;
-  }
-  list.innerHTML = tasks.map(t => `
-    <div class="schedule-item ${state[t.id] ? 'done' : ''}" onclick="toggleTask('${t.id}', '${dateKey}')">
-      <div class="task-check"></div>
-      <div class="task-info">
-        <div class="task-time">${t.time}</div>
-        <div class="task-name">${t.name}</div>
-      </div>
-    </div>`).join('');
-}
-
-window.toggleTask = function(taskId, dateKey) {
-  const stateKey = `batman::${dateKey}`;
-  let state = {};
-  try { state = JSON.parse(localStorage.getItem(stateKey) || '{}'); } catch(_) {}
-  state[taskId] = !state[taskId];
-  setSynced(stateKey, JSON.stringify(state));
-  renderDaySchedule();
-  const tasks    = getTasks();
-  const dow      = new Date(dateKey + 'T00:00:00').getDay();
-  const scheduled = tasks.filter(t => t.days.includes(dow));
-  const doneCount = scheduled.filter(t => state[t.id] === true).length;
-  if (state[taskId] && doneCount === scheduled.length) showToast('Full day complete 🔥');
-  else if (state[taskId]) showToast('Done ✓');
-};
-
-// ====== SETTINGS ======
-function renderSettings() {
-  const urlInput = $('sync-url-input');
-  if (urlInput && document.activeElement !== urlInput) urlInput.value = getSyncUrl();
-  const statusEl = $('sync-status');
-  if (statusEl) statusEl.textContent = localStorage.getItem(SYNC_LAST_KEY) || (getSyncUrl() ? 'Not synced yet' : 'No Sheet connected');
-
-  const tasks     = getTasks();
-  const container = $('tasks-list');
-  if (tasks.length === 0) {
-    container.innerHTML = '<p style="color:var(--text-dim);padding:20px">No tasks. Add one above.</p>';
-    return;
-  }
-  container.innerHTML = tasks.map((task, idx) => {
-    const daysStr = task.days.map(d => ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d]).join(', ');
-    return `<div class="task-item" data-idx="${idx}">
-      <div class="task-header">
-        <strong>${task.name}</strong>
-        <div class="task-actions">
-          <button class="icon-btn" onclick="editTask(${idx})">✏️</button>
-          <button class="icon-btn" onclick="deleteTask(${idx})">🗑️</button>
-        </div>
-      </div>
-      <div class="task-detail">🕒 ${task.time}</div>
-      <div class="task-detail">📅 ${daysStr}</div>
-    </div>`;
-  }).join('');
-}
-
-// FIX #6: addNewTask — was using $('#new-task-name') with # prefix, which breaks since $ = getElementById
-// Fixed to use $('new-task-name') without #
-window.addNewTask = function() {
-  const nameEl = $('new-task-name');
-  const timeEl = $('new-task-time');
-  const name   = nameEl ? nameEl.value.trim() : '';
-  const time   = timeEl ? timeEl.value.trim() : '';
-  if (!name || !time) { showToast('Please fill both name and time'); return; }
-  const checkboxes = document.querySelectorAll('#tab-settings .days-checkboxes input');
-  const days       = Array.from(checkboxes).filter(cb => cb.checked).map(cb => parseInt(cb.value));
-  if (days.length === 0) { showToast('Select at least one day'); return; }
-  const tasks = getTasks();
-  const newId = `custom_${Date.now()}_${Math.floor(Math.random()*1000)}`;
-  tasks.push({ id: newId, name, time, days: days.sort((a,b)=>a-b) });
-  saveTasks(tasks);
-  nameEl.value = '';
-  timeEl.value = '';
-  checkboxes.forEach(cb => cb.checked = false);
-  renderSettings();
-  showToast('Task added ✓');
-};
-
-// FIX #7: editTask — replaced triple browser prompt() with an inline edit form inside the task card
-window.editTask = function(idx) {
-  const tasks   = getTasks();
-  const task    = tasks[idx];
-  const days    = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-  const daysHtml = days.map((d, i) =>
-    `<label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer">
-      <input type="checkbox" value="${i}" ${task.days.includes(i) ? 'checked' : ''} />
-      ${d}
-    </label>`
-  ).join('');
-
-  const container = $('tasks-list');
-  const taskCards = container.querySelectorAll('.task-item');
-  const card      = taskCards[idx];
-  if (!card) return;
-
-  card.innerHTML = `
-    <div class="edit-task-form">
-      <input id="edit-name-${idx}" class="field-input" value="${task.name}" placeholder="Task name" style="margin-bottom:8px" />
-      <input id="edit-time-${idx}" class="field-input" value="${task.time}" placeholder="e.g. 07:00 – 07:30" style="margin-bottom:8px" />
-      <div class="days-checkboxes" style="margin-bottom:10px">${daysHtml}</div>
-      <div style="display:flex;gap:8px">
-        <button class="save-btn" style="flex:1;padding:10px;font-size:13px" onclick="confirmEditTask(${idx})">Save</button>
-        <button class="save-btn" style="flex:1;padding:10px;font-size:13px;background:var(--surface2);color:var(--text);border:1px solid var(--border)" onclick="renderSettings()">Cancel</button>
-      </div>
-    </div>`;
-};
-
-window.confirmEditTask = function(idx) {
-  const tasks   = getTasks();
-  const task    = tasks[idx];
-  const nameEl  = $(`edit-name-${idx}`);
-  const timeEl  = $(`edit-time-${idx}`);
-  const newName = nameEl ? nameEl.value.trim() : task.name;
-  const newTime = timeEl ? timeEl.value.trim() : task.time;
-  const checks  = document.querySelectorAll(`#tasks-list .task-item[data-idx="${idx}"] .edit-task-form input[type="checkbox"]`);
-  // Fallback: all checkboxes inside the currently rendered form
-  const allChecks = document.querySelectorAll('.edit-task-form input[type="checkbox"]');
-  const newDays = Array.from(allChecks).filter(cb => cb.checked).map(cb => parseInt(cb.value)).sort((a,b)=>a-b);
-  if (!newName) { showToast('Task name cannot be empty'); return; }
-  tasks[idx] = { ...task, name: newName, time: newTime, days: newDays.length ? newDays : task.days };
-  saveTasks(tasks);
-  renderSettings();
-  showToast('Task updated ✓');
-};
-
-window.deleteTask = function(idx) {
-  const tasks = getTasks();
-  const name  = tasks[idx]?.name || 'this task';
-  if (confirm(`Delete "${name}"? Past checkmarks are kept but won't show in schedule.`)) {
-    tasks.splice(idx, 1);
-    saveTasks(tasks);
-    renderSettings();
-    showToast('Task deleted');
-  }
-};
-
-// ====== INIT ======
-document.addEventListener('DOMContentLoaded', async () => {
-  renderJournalDate();
-  if (getSyncUrl()) {
-    await fetchSettingsFromSheet();
-    renderJournalDate(); // re-render with questions from sheet
-    pullSync(true).then(() => {
-      if (document.querySelector('.tab.active')?.id === 'tab-journal') renderJournalDate();
-    });
-  }
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js').catch(err => console.log('SW:', err));
-  }
-});
+window.appState = appState;
+window.manualSync = manualSync;
+window.getDebugInfo = getDebugInfo;
+window.AppLogger = AppLogger;
