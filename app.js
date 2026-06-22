@@ -10,7 +10,7 @@
 const APP_CONFIG = {
   // IMPORTANT: Replace this with your newly generated Web App URL.
   // It MUST end in /exec
-  SCRIPT_URL: 'https://script.google.com/macros/s/YOUR_DEPLOYMENT_ID_HERE/exec',
+  SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbzfqLKOmnFA9uYZh87EN-L2JBlM9xG-jId_iWK2T4308VVTjyrDdEP-23utxYZdIOxX-Q/exec',
   
   DEBUG_MODE: true,
   SYNC_INTERVAL: 30000, 
